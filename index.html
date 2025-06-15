@@ -2,11 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <title>Three.js Voxel FPS Game</title>
+    <title>Multiplayer Voxel FPS</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {
+        * {
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
             overflow: hidden;
             font-family: 'Arial', sans-serif;
             background: #000;
@@ -118,6 +123,20 @@
             backdrop-filter: blur(10px);
         }
         
+        #connection-status {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            color: white;
+            z-index: 1000;
+            transition: all 0.3s ease;
+            opacity: 0;
+        }
+        
         canvas {
             display: block;
         }
@@ -131,24 +150,29 @@
             font-size: 24px;
             text-align: center;
             z-index: 200;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 20px;
+            border-radius: 10px;
         }
     </style>
 </head>
 <body>
     <div id="loading">
-        <div>Loading Voxel World...</div>
+        <div>Loading Multiplayer Voxel World...</div>
         <div id="progress">0%</div>
+        <div style="font-size: 14px; margin-top: 10px;">Connecting to server...</div>
     </div>
     
     <div id="container">
         <div id="hud">
+            <div id="connection-status"></div>
             <div id="crosshair"></div>
             <div id="health-bar">
                 <div id="health-fill"></div>
             </div>
             <div id="ammo-counter">
                 <div>Ammo: <span id="ammo">30</span>/<span id="total-ammo">120</span></div>
-                <div>Enemies: <span id="enemy-count">0</span></div>
+                <div>Players: <span id="player-count">1</span></div>
                 <div>Score: <span id="score">0</span></div>
             </div>
         </div>
@@ -157,6 +181,7 @@
             <div id="fps">FPS: --</div>
             <div id="chunks">Chunks: --</div>
             <div id="position">Position: --</div>
+            <div id="network">Network: Connecting...</div>
         </div>
         
         <div id="controls">
@@ -165,10 +190,16 @@
             Mouse - Look<br>
             Click - Shoot<br>
             Space - Jump<br>
-            R - Reload
+            R - Reload<br>
+            <br>
+            <small>Click to start</small>
         </div>
     </div>
 
+    <!-- Socket.IO Client -->
+    <script src="/socket.io/socket.io.js"></script>
+    
+    <!-- Three.js via CDN -->
     <script type="importmap">
     {
         "imports": {
@@ -187,17 +218,575 @@
             CHUNK_SIZE: 32,
             WORLD_HEIGHT: 64,
             RENDER_DISTANCE: 3,
-            BLOCK_SIZE: 1,
             PLAYER_HEIGHT: 1.8,
             PLAYER_SPEED: 8,
             JUMP_VELOCITY: 12,
             GRAVITY: -25,
-            BULLET_SPEED: 100,
+            BULLET_SPEED: 50,
             BULLET_DAMAGE: 25,
             MAX_HEALTH: 100,
             AMMO_CAPACITY: 30,
-            TOTAL_AMMO: 120
+            TOTAL_AMMO: 120,
+            BULLET_GRAVITY: -15
         };
+
+        // Block Types
+        const BLOCK_TYPES = {
+            AIR: 0,
+            GRASS: 1,
+            DIRT: 2,
+            STONE: 3,
+            WATER: 4,
+            SAND: 5,
+            SNOW: 6,
+            TREE: 7
+        };
+
+        // Global Game State
+        const gameState = {
+            health: CONFIG.MAX_HEALTH,
+            ammo: CONFIG.AMMO_CAPACITY,
+            totalAmmo: CONFIG.TOTAL_AMMO,
+            score: 0,
+            bullets: [],
+            chunks: new Map(),
+            loadedChunks: new Set(),
+            terrainCache: new Map(),
+            playerId: null,
+            players: new Map(),
+            isConnected: false,
+            lastUIUpdate: {
+                health: CONFIG.MAX_HEALTH,
+                ammo: CONFIG.AMMO_CAPACITY,
+                totalAmmo: CONFIG.TOTAL_AMMO,
+                score: 0,
+                playerCount: 1
+            }
+        };
+
+        // Initialize Three.js Scene
+        const scene = new THREE.Scene();
+        scene.fog = new THREE.Fog(0x87ceeb, 50, 300);
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ 
+            antialias: true, 
+            powerPreference: "high-performance",
+            alpha: false
+        });
+        
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.setClearColor(0x87ceeb, 1);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        
+        document.getElementById('container').appendChild(renderer.domElement);
+
+        // Pointer Lock Controls
+        const controls = new PointerLockControls(camera, renderer.domElement);
+        scene.add(controls.getObject());
+        camera.position.set(0, 50, 0);
+
+        // Lighting Setup
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        directionalLight.position.set(100, 100, 50);
+        directionalLight.castShadow = true;
+        directionalLight.shadow.mapSize.width = 2048;
+        directionalLight.shadow.mapSize.height = 2048;
+        directionalLight.shadow.camera.near = 0.5;
+        directionalLight.shadow.camera.far = 500;
+        directionalLight.shadow.camera.left = -100;
+        directionalLight.shadow.camera.right = 100;
+        directionalLight.shadow.camera.top = 100;
+        directionalLight.shadow.camera.bottom = -100;
+        scene.add(directionalLight);
+
+        // Block Materials
+        const blockMaterials = {
+            [BLOCK_TYPES.GRASS]: new THREE.MeshLambertMaterial({ color: 0x4a7c49 }),
+            [BLOCK_TYPES.DIRT]: new THREE.MeshLambertMaterial({ color: 0x8B4513 }),
+            [BLOCK_TYPES.STONE]: new THREE.MeshLambertMaterial({ color: 0x696969 }),
+            [BLOCK_TYPES.WATER]: new THREE.MeshLambertMaterial({ color: 0x4169E1, transparent: true, opacity: 0.7 }),
+            [BLOCK_TYPES.SAND]: new THREE.MeshLambertMaterial({ color: 0xF4A460 }),
+            [BLOCK_TYPES.SNOW]: new THREE.MeshLambertMaterial({ color: 0xFFFAFA }),
+            [BLOCK_TYPES.TREE]: new THREE.MeshLambertMaterial({ color: 0x228B22 })
+        };
+
+        // Network Manager
+        class NetworkManager {
+            constructor() {
+                this.socket = null;
+                this.isConnected = false;
+                this.playerId = null;
+                this.serverPlayers = new Map();
+                this.inputSequence = 0;
+                this.lastServerUpdate = 0;
+                this.reconciliationBuffer = [];
+                this.connectionAttempts = 0;
+                this.maxConnectionAttempts = 5;
+                
+                this.initializeConnection();
+            }
+            
+            initializeConnection() {
+                try {
+                    console.log('Initializing Socket.IO connection...');
+                    
+                    this.socket = io({
+                        transports: ['websocket', 'polling'],
+                        upgrade: true,
+                        rememberUpgrade: true,
+                        autoConnect: true,
+                        reconnection: true,
+                        reconnectionDelay: 1000,
+                        reconnectionAttempts: 5,
+                        timeout: 20000
+                    });
+                    
+                    this.setupEventHandlers();
+                    
+                } catch (error) {
+                    console.warn('Socket.IO connection failed, running in single-player mode:', error);
+                    this.showConnectionStatus('Single Player', 'blue');
+                    document.getElementById('network').textContent = 'Network: Single Player';
+                }
+            }
+            
+            setupEventHandlers() {
+                this.socket.on('connect', () => {
+                    console.log('Connected to multiplayer server');
+                    this.isConnected = true;
+                    gameState.isConnected = true;
+                    this.connectionAttempts = 0;
+                    this.showConnectionStatus('Connected', 'green');
+                    document.getElementById('network').textContent = 'Network: Connected';
+                });
+                
+                this.socket.on('disconnect', (reason) => {
+                    console.log('Disconnected from server:', reason);
+                    this.isConnected = false;
+                    gameState.isConnected = false;
+                    this.serverPlayers.clear();
+                    this.showConnectionStatus('Disconnected', 'red');
+                    document.getElementById('network').textContent = 'Network: Disconnected';
+                });
+                
+                this.socket.on('connect_error', (error) => {
+                    this.connectionAttempts++;
+                    console.error('Connection error:', error);
+                    
+                    if (this.connectionAttempts >= this.maxConnectionAttempts) {
+                        this.showConnectionStatus('Single Player Mode', 'blue');
+                        document.getElementById('network').textContent = 'Network: Single Player';
+                    } else {
+                        this.showConnectionStatus(`Connecting... (${this.connectionAttempts}/${this.maxConnectionAttempts})`, 'orange');
+                        document.getElementById('network').textContent = `Network: Connecting... (${this.connectionAttempts}/${this.maxConnectionAttempts})`;
+                    }
+                });
+                
+                this.socket.on('game-state', (data) => {
+                    this.playerId = data.playerId;
+                    gameState.playerId = data.playerId;
+                    
+                    data.players.forEach(playerData => {
+                        if (playerData.id !== this.playerId) {
+                            this.createRemotePlayer(playerData);
+                        }
+                    });
+                    
+                    console.log('Received initial game state, player ID:', this.playerId);
+                });
+                
+                this.socket.on('game-update', (data) => {
+                    this.lastServerUpdate = Date.now();
+                    
+                    data.players.forEach(playerData => {
+                        if (playerData.id === this.playerId) {
+                            this.handleServerReconciliation(playerData);
+                        } else {
+                            this.updateRemotePlayer(playerData);
+                        }
+                    });
+                    
+                    gameState.lastUIUpdate.playerCount = data.players.length;
+                    updateUI();
+                });
+                
+                this.socket.on('player-joined', (playerData) => {
+                    console.log('Player joined:', playerData.id);
+                    this.createRemotePlayer(playerData);
+                });
+                
+                this.socket.on('player-left', (playerId) => {
+                    console.log('Player left:', playerId);
+                    this.removeRemotePlayer(playerId);
+                });
+                
+                this.socket.on('player-shot', (data) => {
+                    this.handleRemoteShot(data);
+                });
+                
+                this.socket.on('player-hit', (data) => {
+                    this.handlePlayerHit(data);
+                });
+                
+                this.socket.on('player-reloaded', (data) => {
+                    gameState.ammo = data.ammo;
+                    gameState.totalAmmo = data.totalAmmo;
+                    updateUI();
+                });
+            }
+            
+            sendPlayerInput(inputState, playerPosition, playerRotation) {
+                if (!this.isConnected) return;
+                
+                this.inputSequence++;
+                const inputData = {
+                    input: inputState,
+                    position: {
+                        x: playerPosition.x,
+                        y: playerPosition.y,
+                        z: playerPosition.z
+                    },
+                    rotation: {
+                        x: playerRotation.x,
+                        y: playerRotation.y,
+                        z: playerRotation.z
+                    },
+                    sequence: this.inputSequence,
+                    timestamp: Date.now()
+                };
+                
+                this.reconciliationBuffer.push({
+                    sequence: this.inputSequence,
+                    input: inputState,
+                    timestamp: Date.now(),
+                    position: { ...inputData.position }
+                });
+                
+                if (this.reconciliationBuffer.length > 60) {
+                    this.reconciliationBuffer.shift();
+                }
+                
+                this.socket.emit('player-input', inputData);
+            }
+            
+            sendShot(position, direction) {
+                if (!this.isConnected) return;
+                
+                const velocity = {
+                    x: direction.x * CONFIG.BULLET_SPEED,
+                    y: direction.y * CONFIG.BULLET_SPEED,
+                    z: direction.z * CONFIG.BULLET_SPEED
+                };
+                
+                this.socket.emit('player-shoot', {
+                    position: {
+                        x: position.x,
+                        y: position.y,
+                        z: position.z
+                    },
+                    velocity: velocity,
+                    timestamp: Date.now()
+                });
+            }
+            
+            sendReload() {
+                if (!this.isConnected) return;
+                this.socket.emit('player-reload');
+            }
+            
+            handleServerReconciliation(serverPlayer) {
+                const serverSequence = serverPlayer.inputSequence;
+                const reconciliationEntry = this.reconciliationBuffer.find(
+                    entry => entry.sequence === serverSequence
+                );
+                
+                if (reconciliationEntry) {
+                    const positionDiff = Math.abs(
+                        reconciliationEntry.position.x - serverPlayer.position.x +
+                        reconciliationEntry.position.y - serverPlayer.position.y +
+                        reconciliationEntry.position.z - serverPlayer.position.z
+                    );
+                    
+                    if (positionDiff > 0.5) {
+                        const currentPos = controls.getObject().position;
+                        currentPos.lerp(
+                            new THREE.Vector3(
+                                serverPlayer.position.x,
+                                serverPlayer.position.y,
+                                serverPlayer.position.z
+                            ),
+                            0.3
+                        );
+                    }
+                    
+                    this.reconciliationBuffer = this.reconciliationBuffer.filter(
+                        entry => entry.sequence > serverSequence
+                    );
+                }
+            }
+            
+            createRemotePlayer(playerData) {
+                if (this.serverPlayers.has(playerData.id)) return;
+                
+                const geometry = new THREE.CapsuleGeometry(0.5, 1.5, 4, 8);
+                const material = new THREE.MeshLambertMaterial({ 
+                    color: this.getPlayerColor(playerData.id) 
+                });
+                const mesh = new THREE.Mesh(geometry, material);
+                
+                mesh.position.set(
+                    playerData.position.x,
+                    playerData.position.y,
+                    playerData.position.z
+                );
+                mesh.castShadow = true;
+                mesh.receiveShadow = true;
+                
+                const nameTag = this.createNameTag(playerData.id);
+                mesh.add(nameTag);
+                
+                scene.add(mesh);
+                
+                const remotePlayer = {
+                    id: playerData.id,
+                    mesh: mesh,
+                    targetPosition: { ...playerData.position },
+                    targetRotation: { ...playerData.rotation },
+                    health: playerData.health,
+                    isAlive: playerData.isAlive,
+                    interpolationBuffer: []
+                };
+                
+                this.serverPlayers.set(playerData.id, remotePlayer);
+            }
+            
+            updateRemotePlayer(playerData) {
+                const remotePlayer = this.serverPlayers.get(playerData.id);
+                if (!remotePlayer) {
+                    this.createRemotePlayer(playerData);
+                    return;
+                }
+                
+                remotePlayer.interpolationBuffer.push({
+                    position: { ...playerData.position },
+                    rotation: { ...playerData.rotation },
+                    timestamp: Date.now()
+                });
+                
+                if (remotePlayer.interpolationBuffer.length > 10) {
+                    remotePlayer.interpolationBuffer.shift();
+                }
+                
+                remotePlayer.health = playerData.health;
+                remotePlayer.isAlive = playerData.isAlive;
+                remotePlayer.mesh.visible = playerData.isAlive;
+            }
+            
+            interpolateRemotePlayers() {
+                const now = Date.now();
+                const interpolationDelay = 100;
+                
+                this.serverPlayers.forEach(remotePlayer => {
+                    if (!remotePlayer.isAlive || remotePlayer.interpolationBuffer.length < 2) return;
+                    
+                    const targetTime = now - interpolationDelay;
+                    let olderFrame = null;
+                    let newerFrame = null;
+                    
+                    for (let i = 0; i < remotePlayer.interpolationBuffer.length - 1; i++) {
+                        if (remotePlayer.interpolationBuffer[i].timestamp <= targetTime &&
+                            remotePlayer.interpolationBuffer[i + 1].timestamp >= targetTime) {
+                            olderFrame = remotePlayer.interpolationBuffer[i];
+                            newerFrame = remotePlayer.interpolationBuffer[i + 1];
+                            break;
+                        }
+                    }
+                    
+                    if (olderFrame && newerFrame) {
+                        const timeDiff = newerFrame.timestamp - olderFrame.timestamp;
+                        const alpha = timeDiff > 0 ? (targetTime - olderFrame.timestamp) / timeDiff : 0;
+                        
+                        remotePlayer.mesh.position.lerpVectors(
+                            new THREE.Vector3(
+                                olderFrame.position.x,
+                                olderFrame.position.y,
+                                olderFrame.position.z
+                            ),
+                            new THREE.Vector3(
+                                newerFrame.position.x,
+                                newerFrame.position.y,
+                                newerFrame.position.z
+                            ),
+                            alpha
+                        );
+                    }
+                    
+                    remotePlayer.interpolationBuffer = remotePlayer.interpolationBuffer.filter(
+                        frame => now - frame.timestamp < 500
+                    );
+                });
+            }
+            
+            removeRemotePlayer(playerId) {
+                const remotePlayer = this.serverPlayers.get(playerId);
+                if (remotePlayer) {
+                    scene.remove(remotePlayer.mesh);
+                    remotePlayer.mesh.geometry.dispose();
+                    remotePlayer.mesh.material.dispose();
+                    this.serverPlayers.delete(playerId);
+                }
+            }
+            
+            handleRemoteShot(data) {
+                const bullet = bulletPool.getBullet();
+                if (bullet) {
+                    bullet.position.set(
+                        data.position.x,
+                        data.position.y,
+                        data.position.z
+                    );
+                    
+                    bullet.userData = {
+                        velocity: data.velocity,
+                        serverControlled: true,
+                        bulletId: data.bulletId
+                    };
+                }
+                
+                weaponSystem.createMuzzleFlash(new THREE.Vector3(
+                    data.position.x,
+                    data.position.y,
+                    data.position.z
+                ));
+            }
+            
+            handlePlayerHit(data) {
+                if (data.targetId === this.playerId) {
+                    gameState.health -= data.damage;
+                    updateHealthBar();
+                    
+                    document.body.style.background = 'rgba(255,0,0,0.3)';
+                    setTimeout(() => {
+                        document.body.style.background = 'transparent';
+                    }, 200);
+                }
+                
+                this.createHitEffect(new THREE.Vector3(
+                    data.position.x,
+                    data.position.y,
+                    data.position.z
+                ), 0xff0000);
+            }
+            
+            getPlayerColor(playerId) {
+                let hash = 0;
+                for (let i = 0; i < playerId.length; i++) {
+                    hash = playerId.charCodeAt(i) + ((hash << 5) - hash);
+                }
+                const hue = Math.abs(hash % 360);
+                return new THREE.Color(`hsl(${hue}, 70%, 50%)`);
+            }
+            
+            createNameTag(playerId) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 256;
+                canvas.height = 64;
+                const context = canvas.getContext('2d');
+                
+                context.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                context.fillRect(0, 0, 256, 64);
+                
+                context.fillStyle = 'white';
+                context.font = '24px Arial';
+                context.textAlign = 'center';
+                context.fillText(playerId.substring(0, 8), 128, 40);
+                
+                const texture = new THREE.CanvasTexture(canvas);
+                const material = new THREE.SpriteMaterial({ map: texture });
+                const sprite = new THREE.Sprite(material);
+                
+                sprite.position.set(0, 1.5, 0);
+                sprite.scale.set(2, 0.5, 1);
+                
+                return sprite;
+            }
+            
+            showConnectionStatus(status, color) {
+                const statusEl = document.getElementById('connection-status');
+                statusEl.textContent = status;
+                statusEl.style.backgroundColor = color;
+                statusEl.style.opacity = '1';
+                
+                if (color === 'green') {
+                    setTimeout(() => {
+                        statusEl.style.opacity = '0';
+                    }, 3000);
+                }
+            }
+            
+            createHitEffect(position, color) {
+                const particleCount = 12;
+                const particles = new THREE.Group();
+                
+                for (let i = 0; i < particleCount; i++) {
+                    const particle = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.02, 4, 4),
+                        new THREE.MeshBasicMaterial({ color: color })
+                    );
+                    
+                    particle.position.copy(position);
+                    particle.velocity = new THREE.Vector3(
+                        (Math.random() - 0.5) * 10,
+                        Math.random() * 5 + 2,
+                        (Math.random() - 0.5) * 10
+                    );
+                    
+                    particles.add(particle);
+                }
+                
+                scene.add(particles);
+                
+                const animateParticles = () => {
+                    let activeParticles = 0;
+                    
+                    particles.children.forEach(particle => {
+                        if (particle.userData.life === undefined) particle.userData.life = 1.0;
+                        
+                        if (particle.userData.life > 0) {
+                            particle.velocity.y -= 15 * 0.016;
+                            particle.position.add(particle.velocity.clone().multiplyScalar(0.016));
+                            particle.userData.life -= 0.05;
+                            particle.material.opacity = particle.userData.life;
+                            activeParticles++;
+                        }
+                    });
+                    
+                    if (activeParticles > 0) {
+                        requestAnimationFrame(animateParticles);
+                    } else {
+                        scene.remove(particles);
+                        particles.children.forEach(particle => {
+                            particle.geometry.dispose();
+                            particle.material.dispose();
+                        });
+                    }
+                };
+                
+                animateParticles();
+            }
+            
+            update() {
+                if (this.isConnected) {
+                    this.interpolateRemotePlayers();
+                }
+            }
+        }
 
         // Perlin Noise Implementation
         class PerlinNoise {
@@ -210,7 +799,6 @@
                 const p = [];
                 for (let i = 0; i < 256; i++) p[i] = i;
                 
-                // Shuffle using seed
                 let rng = this.seed;
                 for (let i = 255; i > 0; i--) {
                     rng = (rng * 9301 + 49297) % 233280;
@@ -218,7 +806,7 @@
                     [p[i], p[j]] = [p[j], p[i]];
                 }
                 
-                return p.concat(p); // Duplicate for overflow
+                return p.concat(p);
             }
 
             fade(t) {
@@ -286,79 +874,6 @@
             }
         }
 
-        // Block Types
-        const BLOCK_TYPES = {
-            AIR: 0,
-            GRASS: 1,
-            DIRT: 2,
-            STONE: 3,
-            WATER: 4,
-            SAND: 5,
-            SNOW: 6,
-            TREE: 7
-        };
-
-        // Game State
-        const gameState = {
-            health: CONFIG.MAX_HEALTH,
-            ammo: CONFIG.AMMO_CAPACITY,
-            totalAmmo: CONFIG.TOTAL_AMMO,
-            score: 0,
-            enemies: [],
-            bullets: [],
-            chunks: new Map(),
-            loadedChunks: new Set()
-        };
-
-        // Initialize Three.js
-        const scene = new THREE.Scene();
-        scene.fog = new THREE.Fog(0x87ceeb, 50, 300);
-        
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        renderer.setClearColor(0x87ceeb, 1);
-        
-        document.getElementById('container').appendChild(renderer.domElement);
-
-        // Controls
-        const controls = new PointerLockControls(camera, renderer.domElement);
-        scene.add(controls.getObject());
-        camera.position.set(0, 50, 0);
-
-        // Noise generator
-        const noise = new PerlinNoise(42);
-
-        // Lighting
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
-        scene.add(ambientLight);
-
-        const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-        directionalLight.position.set(100, 100, 50);
-        directionalLight.castShadow = true;
-        directionalLight.shadow.mapSize.width = 2048;
-        directionalLight.shadow.mapSize.height = 2048;
-        directionalLight.shadow.camera.near = 0.5;
-        directionalLight.shadow.camera.far = 500;
-        directionalLight.shadow.camera.left = -100;
-        directionalLight.shadow.camera.right = 100;
-        directionalLight.shadow.camera.top = 100;
-        directionalLight.shadow.camera.bottom = -100;
-        scene.add(directionalLight);
-
-        // Block Materials
-        const blockMaterials = {
-            [BLOCK_TYPES.GRASS]: new THREE.MeshLambertMaterial({ color: 0x4a7c49 }),
-            [BLOCK_TYPES.DIRT]: new THREE.MeshLambertMaterial({ color: 0x8B4513 }),
-            [BLOCK_TYPES.STONE]: new THREE.MeshLambertMaterial({ color: 0x696969 }),
-            [BLOCK_TYPES.WATER]: new THREE.MeshLambertMaterial({ color: 0x4169E1, transparent: true, opacity: 0.7 }),
-            [BLOCK_TYPES.SAND]: new THREE.MeshLambertMaterial({ color: 0xF4A460 }),
-            [BLOCK_TYPES.SNOW]: new THREE.MeshLambertMaterial({ color: 0xFFFAFA }),
-            [BLOCK_TYPES.TREE]: new THREE.MeshLambertMaterial({ color: 0x228B22 })
-        };
-
         // Voxel World Generation
         class VoxelWorld {
             constructor() {
@@ -386,7 +901,6 @@
                     return BLOCK_TYPES.STONE;
                 }
                 
-                // Trees
                 if (y === baseHeight + 1 && Math.random() < 0.01 && temperatureNoise > -0.2) {
                     return BLOCK_TYPES.TREE;
                 }
@@ -401,7 +915,6 @@
                 const chunk = new THREE.Group();
                 const instances = new Map();
 
-                // Initialize instanced meshes for each block type
                 Object.keys(BLOCK_TYPES).forEach(type => {
                     const blockType = BLOCK_TYPES[type];
                     if (blockType !== BLOCK_TYPES.AIR) {
@@ -425,7 +938,6 @@
                     }
                 }
 
-                // Create instanced meshes
                 instances.forEach((matrices, blockType) => {
                     if (matrices.length > 0) {
                         const instancedMesh = new THREE.InstancedMesh(
@@ -445,47 +957,79 @@
                     }
                 });
 
+                chunk.userData = { chunkKey, instances };
                 this.chunks.set(chunkKey, chunk);
                 return chunk;
             }
+
+            disposeChunk(chunkKey) {
+                const chunk = this.chunks.get(chunkKey);
+                if (chunk) {
+                    chunk.children.forEach(child => {
+                        if (child.dispose) child.dispose();
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(mat => mat.dispose());
+                            } else {
+                                child.material.dispose();
+                            }
+                        }
+                    });
+                    this.chunks.delete(chunkKey);
+                }
+            }
         }
 
-        const voxelWorld = new VoxelWorld();
+        // Bullet Pool
+        class BulletPool {
+            constructor(size = 100) {
+                this.pool = [];
+                this.active = [];
+                
+                for (let i = 0; i < size; i++) {
+                    const mesh = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.05, 8, 6),
+                        new THREE.MeshBasicMaterial({ color: 0xffff00 })
+                    );
+                    mesh.visible = false;
+                    mesh.userData = { pooled: true };
+                    scene.add(mesh);
+                    this.pool.push(mesh);
+                }
+            }
 
-        // Enhanced Weapon System based on Three.js community examples
-        // Reference: https://discourse.threejs.org/t/making-bullets-come-out-of-a-weapon/18293
+            getBullet() {
+                if (this.pool.length > 0) {
+                    const mesh = this.pool.pop();
+                    mesh.visible = true;
+                    mesh.userData = { pooled: false };
+                    this.active.push(mesh);
+                    return mesh;
+                }
+                return null;
+            }
+
+            returnBullet(mesh) {
+                if (!mesh || mesh.userData.pooled) return;
+                
+                mesh.visible = false;
+                mesh.userData = { pooled: true };
+                mesh.position.set(0, -10000, 0);
+                
+                const index = this.active.indexOf(mesh);
+                if (index > -1) {
+                    this.active.splice(index, 1);
+                    this.pool.push(mesh);
+                }
+            }
+        }
+
+        // Weapon System
         class WeaponSystem {
             constructor() {
-                this.weapons = {
-                    pistol: {
-                        damage: 25,
-                        fireRate: 300,
-                        accuracy: 0.95,
-                        ammoCapacity: 12,
-                        reloadTime: 1500
-                    },
-                    rifle: {
-                        damage: 40,
-                        fireRate: 150,
-                        accuracy: 0.85,
-                        ammoCapacity: 30,
-                        reloadTime: 2000
-                    },
-                    shotgun: {
-                        damage: 80,
-                        fireRate: 800,
-                        accuracy: 0.6,
-                        ammoCapacity: 6,
-                        reloadTime: 2500,
-                        pellets: 5
-                    }
-                };
-                
-                this.currentWeapon = 'rifle';
                 this.lastShot = 0;
                 this.isReloading = false;
-                
-                // Create weapon mesh attached to camera
                 this.createWeaponMesh();
             }
             
@@ -494,7 +1038,6 @@
                 const weaponMaterial = new THREE.MeshLambertMaterial({ color: 0x444444 });
                 this.weaponMesh = new THREE.Mesh(weaponGeometry, weaponMaterial);
                 
-                // Position weapon relative to camera as seen in examples
                 this.weaponMesh.position.set(0.3, -0.2, -0.5);
                 this.weaponMesh.rotation.y = THREE.MathUtils.degToRad(5);
                 
@@ -502,58 +1045,43 @@
             }
             
             canShoot() {
-                const weapon = this.weapons[this.currentWeapon];
                 return !this.isReloading && 
                        gameState.ammo > 0 && 
-                       Date.now() - this.lastShot > weapon.fireRate;
+                       Date.now() - this.lastShot > 150;
             }
             
-            // Implementation based on Three.js forum examples
-            // Reference: https://discourse.threejs.org/t/making-bullets-come-out-of-a-weapon/18293
             fireWeapon() {
                 if (!this.canShoot()) return false;
                 
-                const weapon = this.weapons[this.currentWeapon];
                 this.lastShot = Date.now();
                 
-                // Get weapon world position and quaternion as shown in examples
                 const weaponWorldPosition = new THREE.Vector3();
-                const weaponWorldQuaternion = new THREE.Quaternion();
-                
                 this.weaponMesh.getWorldPosition(weaponWorldPosition);
-                this.weaponMesh.getWorldQuaternion(weaponWorldQuaternion);
                 
-                // Calculate firing direction from camera
                 const direction = new THREE.Vector3();
                 camera.getWorldDirection(direction);
                 
-                // Shotgun fires multiple pellets
-                const pelletCount = weapon.pellets || 1;
-                
-                for (let i = 0; i < pelletCount; i++) {
-                    const bulletDirection = direction.clone();
-                    
-                    // Add spread based on accuracy
-                    const spread = (1 - weapon.accuracy) * 0.1;
-                    bulletDirection.x += (Math.random() - 0.5) * spread;
-                    bulletDirection.y += (Math.random() - 0.5) * spread;
-                    bulletDirection.z += (Math.random() - 0.5) * spread;
-                    bulletDirection.normalize();
-                    
-                    const bullet = new Bullet(weaponWorldPosition.clone(), bulletDirection, weapon.damage / pelletCount);
+                // Client-side shooting
+                const bullet = new Bullet(weaponWorldPosition.clone(), direction, CONFIG.BULLET_DAMAGE, 'player');
+                if (bullet.mesh) {
                     gameState.bullets.push(bullet);
                 }
                 
-                // Weapon recoil animation
+                // Server-side shooting
+                if (networkManager && networkManager.isConnected) {
+                    networkManager.sendShot(weaponWorldPosition, direction);
+                } else {
+                    // Single player mode
+                    gameState.ammo--;
+                }
+                
+                // Weapon recoil
                 this.weaponMesh.position.z -= 0.05;
                 setTimeout(() => {
                     this.weaponMesh.position.z += 0.05;
                 }, 50);
                 
-                // Muzzle flash effect
                 this.createMuzzleFlash(weaponWorldPosition);
-                
-                gameState.ammo--;
                 updateUI();
                 return true;
             }
@@ -569,61 +1097,51 @@
                 if (this.isReloading || gameState.totalAmmo <= 0 || gameState.ammo === CONFIG.AMMO_CAPACITY) return;
                 
                 this.isReloading = true;
-                const weapon = this.weapons[this.currentWeapon];
                 
-                setTimeout(() => {
-                    const needed = CONFIG.AMMO_CAPACITY - gameState.ammo;
-                    const available = Math.min(needed, gameState.totalAmmo);
-                    
-                    gameState.ammo += available;
-                    gameState.totalAmmo -= available;
-                    this.isReloading = false;
-                    updateUI();
-                }, weapon.reloadTime);
+                if (networkManager && networkManager.isConnected) {
+                    networkManager.sendReload();
+                } else {
+                    // Single player reload
+                    setTimeout(() => {
+                        const needed = CONFIG.AMMO_CAPACITY - gameState.ammo;
+                        const available = Math.min(needed, gameState.totalAmmo);
+                        
+                        gameState.ammo += available;
+                        gameState.totalAmmo -= available;
+                        this.isReloading = false;
+                        updateUI();
+                    }, 2000);
+                }
             }
         }
 
-        // Bullet System based on Three.js examples
-        // Reference: https://stackoverflow.com/questions/50965025/three-js-shooting-bullet
+        // Bullet System
         class Bullet {
-            constructor(position, direction, damage = CONFIG.BULLET_DAMAGE) {
-                this.velocity = direction.multiplyScalar(CONFIG.BULLET_SPEED);
-                this.life = 3;
-                this.damage = damage;
+            constructor(position, direction, damage, owner = 'player') {
+                this.mesh = bulletPool.getBullet();
+                if (!this.mesh) return null;
                 
-                const geometry = new THREE.SphereGeometry(0.05, 8, 6);
-                const material = new THREE.MeshBasicMaterial({ color: 0xffff00 });
-                this.mesh = new THREE.Mesh(geometry, material);
                 this.mesh.position.copy(position);
-                
-                scene.add(this.mesh);
+                this.velocity = direction.clone().multiplyScalar(CONFIG.BULLET_SPEED);
+                this.life = 5;
+                this.damage = damage;
+                this.owner = owner;
             }
 
             update(delta) {
-                this.mesh.position.add(this.velocity.clone().multiplyScalar(delta));
-                this.life -= delta;
+                if (!this.mesh) return false;
                 
-                // Check collision with enemies
-                for (let enemy of gameState.enemies) {
-                    if (this.mesh.position.distanceTo(enemy.mesh.position) < 1) {
-                        enemy.takeDamage(this.damage);
-                        this.destroy();
-                        return false;
-                    }
-                }
+                this.velocity.y += CONFIG.BULLET_GRAVITY * delta;
                 
-                // Check collision with terrain
-                const terrainHeight = voxelWorld.getBlockType(
-                    Math.floor(this.mesh.position.x),
-                    Math.floor(this.mesh.position.y),
-                    Math.floor(this.mesh.position.z)
-                );
+                const deltaVelocity = this.velocity.clone().multiplyScalar(delta);
+                this.mesh.position.add(deltaVelocity);
                 
-                if (terrainHeight !== BLOCK_TYPES.AIR) {
+                if (this.mesh.position.y < -20 || this.mesh.position.y > CONFIG.WORLD_HEIGHT + 50) {
                     this.destroy();
                     return false;
                 }
                 
+                this.life -= delta;
                 if (this.life <= 0) {
                     this.destroy();
                     return false;
@@ -633,7 +1151,10 @@
             }
 
             destroy() {
-                scene.remove(this.mesh);
+                if (this.mesh) {
+                    bulletPool.returnBullet(this.mesh);
+                    this.mesh = null;
+                }
                 const index = gameState.bullets.indexOf(this);
                 if (index > -1) {
                     gameState.bullets.splice(index, 1);
@@ -641,128 +1162,14 @@
             }
         }
 
-        // Enemy System
-        class Enemy {
-            constructor(x, z) {
-                this.health = 50;
-                this.maxHealth = 50;
-                this.speed = 2;
-                this.damage = 20;
-                this.lastAttack = 0;
-                this.attackCooldown = 2000;
-                
-                // Create enemy mesh
-                const geometry = new THREE.BoxGeometry(1, 2, 1);
-                const material = new THREE.MeshLambertMaterial({ color: 0xff0000 });
-                this.mesh = new THREE.Mesh(geometry, material);
-                
-                // Position enemy on terrain
-                const y = this.getTerrainHeight(x, z) + 1;
-                this.mesh.position.set(x, y, z);
-                this.mesh.castShadow = true;
-                
-                // Add health bar
-                this.createHealthBar();
-                
-                scene.add(this.mesh);
-                this.targetPosition = this.mesh.position.clone();
-            }
-
-            getTerrainHeight(x, z) {
-                const heightNoise = noise.octaveNoise(x, z, 4, 0.5, 0.01);
-                return Math.floor(20 + heightNoise * 20);
-            }
-
-            createHealthBar() {
-                const healthBarGeometry = new THREE.PlaneGeometry(1.5, 0.2);
-                const healthBarMaterial = new THREE.MeshBasicMaterial({ 
-                    color: 0x00ff00,
-                    transparent: true 
-                });
-                this.healthBar = new THREE.Mesh(healthBarGeometry, healthBarMaterial);
-                this.healthBar.position.set(0, 1.5, 0);
-                this.mesh.add(this.healthBar);
-            }
-
-            update(delta, playerPosition) {
-                // AI behavior - move towards player
-                const direction = new THREE.Vector3()
-                    .subVectors(playerPosition, this.mesh.position)
-                    .normalize();
-                
-                // Move towards player
-                this.targetPosition.add(direction.multiplyScalar(this.speed * delta));
-                this.targetPosition.y = this.getTerrainHeight(this.targetPosition.x, this.targetPosition.z) + 1;
-                
-                this.mesh.position.lerp(this.targetPosition, 0.1);
-                
-                // Look at player
-                this.mesh.lookAt(playerPosition);
-                
-                // Attack player if close enough
-                const distance = this.mesh.position.distanceTo(playerPosition);
-                if (distance < 3 && Date.now() - this.lastAttack > this.attackCooldown) {
-                    this.attackPlayer();
-                    this.lastAttack = Date.now();
-                }
-                
-                // Update health bar
-                this.updateHealthBar();
-                
-                // Face camera for health bar
-                this.healthBar.lookAt(camera.position);
-            }
-
-            attackPlayer() {
-                gameState.health -= this.damage;
-                updateHealthBar();
-                
-                // Visual feedback
-                document.body.style.backgroundColor = 'rgba(255,0,0,0.3)';
-                setTimeout(() => {
-                    document.body.style.backgroundColor = 'transparent';
-                }, 100);
-            }
-
-            takeDamage(damage) {
-                this.health -= damage;
-                this.updateHealthBar();
-                
-                // Flash red when hit
-                const originalColor = this.mesh.material.color.clone();
-                this.mesh.material.color.setHex(0xffffff);
-                setTimeout(() => {
-                    this.mesh.material.color.copy(originalColor);
-                }, 100);
-                
-                if (this.health <= 0) {
-                    this.destroy();
-                    gameState.score += 100;
-                    updateUI();
-                    return true;
-                }
-                return false;
-            }
-
-            updateHealthBar() {
-                const healthPercent = this.health / this.maxHealth;
-                this.healthBar.scale.x = healthPercent;
-                this.healthBar.material.color.setHSL((healthPercent * 120) / 360, 1, 0.5);
-            }
-
-            destroy() {
-                scene.remove(this.mesh);
-                const index = gameState.enemies.indexOf(this);
-                if (index > -1) {
-                    gameState.enemies.splice(index, 1);
-                }
-            }
-        }
-
-        // Initialize weapon system
+        // Initialize systems
+        const noise = new PerlinNoise(42);
+        const bulletPool = new BulletPool(100);
+        const voxelWorld = new VoxelWorld();
         const weaponSystem = new WeaponSystem();
+        const networkManager = new NetworkManager();
 
-        // Movement and physics
+        // Movement
         const moveState = {
             forward: false,
             backward: false,
@@ -774,10 +1181,6 @@
 
         const velocity = new THREE.Vector3();
         const direction = new THREE.Vector3();
-
-        // Raycaster for collision detection
-        const raycaster = new THREE.Raycaster();
-        const downVector = new THREE.Vector3(0, -1, 0);
 
         // Event Handlers
         const onKeyDown = function(event) {
@@ -818,42 +1221,53 @@
         document.addEventListener('keyup', onKeyUp);
         document.addEventListener('mousedown', onMouseDown);
 
-        // Click to lock pointer
         renderer.domElement.addEventListener('click', () => {
-            controls.lock();
+            if (!controls.isLocked) {
+                controls.lock();
+            }
         });
 
         // Game Functions
-        function spawnEnemy() {
-            const angle = Math.random() * Math.PI * 2;
-            const distance = 30 + Math.random() * 20;
-            const x = camera.position.x + Math.cos(angle) * distance;
-            const z = camera.position.z + Math.sin(angle) * distance;
-            
-            const enemy = new Enemy(x, z);
-            gameState.enemies.push(enemy);
-        }
-
         function updateHealthBar() {
             const healthPercent = Math.max(0, gameState.health / CONFIG.MAX_HEALTH);
             document.getElementById('health-fill').style.width = `${healthPercent * 100}%`;
             
             if (gameState.health <= 0) {
-                // Game over
                 alert('Game Over! Final Score: ' + gameState.score);
                 location.reload();
             }
         }
 
         function updateUI() {
-            document.getElementById('ammo').textContent = gameState.ammo;
-            document.getElementById('total-ammo').textContent = gameState.totalAmmo;
-            document.getElementById('enemy-count').textContent = gameState.enemies.length;
-            document.getElementById('score').textContent = gameState.score;
+            const state = gameState.lastUIUpdate;
+            
+            if (state.ammo !== gameState.ammo) {
+                document.getElementById('ammo').textContent = gameState.ammo;
+                state.ammo = gameState.ammo;
+            }
+            
+            if (state.totalAmmo !== gameState.totalAmmo) {
+                document.getElementById('total-ammo').textContent = gameState.totalAmmo;
+                state.totalAmmo = gameState.totalAmmo;
+            }
+            
+            if (state.playerCount !== gameState.lastUIUpdate.playerCount) {
+                document.getElementById('player-count').textContent = gameState.lastUIUpdate.playerCount;
+                state.playerCount = gameState.lastUIUpdate.playerCount;
+            }
+            
+            if (state.score !== gameState.score) {
+                document.getElementById('score').textContent = gameState.score;
+                state.score = gameState.score;
+            }
         }
 
-        // Chunk loading system
+        let chunkUpdateCounter = 0;
         function updateChunks() {
+            chunkUpdateCounter++;
+            if (chunkUpdateCounter < 5) return;
+            chunkUpdateCounter = 0;
+            
             const playerChunkX = Math.floor(camera.position.x / CONFIG.CHUNK_SIZE);
             const playerChunkZ = Math.floor(camera.position.z / CONFIG.CHUNK_SIZE);
             
@@ -872,19 +1286,18 @@
                 }
             }
             
-            // Remove distant chunks
             for (let chunkKey of gameState.loadedChunks) {
                 if (!requiredChunks.has(chunkKey)) {
                     const chunk = voxelWorld.chunks.get(chunkKey);
                     if (chunk) {
                         scene.remove(chunk);
+                        voxelWorld.disposeChunk(chunkKey);
                         gameState.loadedChunks.delete(chunkKey);
                     }
                 }
             }
         }
 
-        // Performance monitoring
         let frameCount = 0;
         let lastTime = performance.now();
 
@@ -904,14 +1317,31 @@
             }
         }
 
+        function getTerrainHeight(x, z) {
+            const key = `${Math.floor(x)},${Math.floor(z)}`;
+            if (gameState.terrainCache.has(key)) {
+                return gameState.terrainCache.get(key);
+            }
+            
+            for (let y = CONFIG.WORLD_HEIGHT - 1; y >= 0; y--) {
+                if (voxelWorld.getBlockType(Math.floor(x), y, Math.floor(z)) !== BLOCK_TYPES.AIR) {
+                    gameState.terrainCache.set(key, y + 1);
+                    return y + 1;
+                }
+            }
+            gameState.terrainCache.set(key, 0);
+            return 0;
+        }
+
         // Initialize world
         async function initializeWorld() {
             const loadingEl = document.getElementById('loading');
             const progressEl = document.getElementById('progress');
             
-            // Load initial chunks
             const totalChunks = (CONFIG.RENDER_DISTANCE * 2 + 1) ** 2;
             let loadedChunks = 0;
+            
+            console.log('Generating world chunks...');
             
             for (let x = -CONFIG.RENDER_DISTANCE; x <= CONFIG.RENDER_DISTANCE; x++) {
                 for (let z = -CONFIG.RENDER_DISTANCE; z <= CONFIG.RENDER_DISTANCE; z++) {
@@ -923,186 +1353,47 @@
                     const progress = Math.round((loadedChunks / totalChunks) * 100);
                     progressEl.textContent = `${progress}%`;
                     
-                    // Allow browser to render
                     await new Promise(resolve => setTimeout(resolve, 10));
                 }
             }
             
-            // Position player above terrain
             const playerHeight = voxelWorld.getBlockType(0, 30, 0) !== BLOCK_TYPES.AIR ? 30 : 40;
             camera.position.set(0, playerHeight + CONFIG.PLAYER_HEIGHT, 0);
             
-            // Spawn initial enemies
-            for (let i = 0; i < 5; i++) {
-                setTimeout(() => spawnEnemy(), i * 2000);
-            }
-            
-            // Hide loading screen
             loadingEl.style.display = 'none';
             updateUI();
             
-            console.log('Voxel world initialized with', gameState.loadedChunks.size, 'chunks');
+            console.log('✅ World initialized with', gameState.loadedChunks.size, 'chunks');
         }
-
-        // Terrain collision detection
-        function getTerrainHeight(x, z) {
-            for (let y = CONFIG.WORLD_HEIGHT - 1; y >= 0; y--) {
-                if (voxelWorld.getBlockType(Math.floor(x), y, Math.floor(z)) !== BLOCK_TYPES.AIR) {
-                    return y + 1;
-                }
-            }
-            return 0;
-        }
-
-        function checkTerrainCollision(position, radius = 0.5) {
-            const x = Math.floor(position.x);
-            const y = Math.floor(position.y);
-            const z = Math.floor(position.z);
-            
-            // Check surrounding blocks
-            for (let dx = -1; dx <= 1; dx++) {
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dz = -1; dz <= 1; dz++) {
-                        const blockType = voxelWorld.getBlockType(x + dx, y + dy, z + dz);
-                        if (blockType !== BLOCK_TYPES.AIR && blockType !== BLOCK_TYPES.WATER) {
-                            const blockCenter = new THREE.Vector3(x + dx + 0.5, y + dy + 0.5, z + dz + 0.5);
-                            const distance = position.distanceTo(blockCenter);
-                            if (distance < radius + 0.5) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-            return false;
-        }
-
-        // Enhanced minimap system
-        function createMinimap() {
-            const minimapSize = 150;
-            const minimapCanvas = document.createElement('canvas');
-            minimapCanvas.width = minimapSize;
-            minimapCanvas.height = minimapSize;
-            minimapCanvas.style.position = 'absolute';
-            minimapCanvas.style.top = '20px';
-            minimapCanvas.style.right = '200px';
-            minimapCanvas.style.border = '2px solid white';
-            minimapCanvas.style.borderRadius = '50%';
-            minimapCanvas.style.background = 'rgba(0,0,0,0.7)';
-            document.getElementById('hud').appendChild(minimapCanvas);
-            
-            const ctx = minimapCanvas.getContext('2d');
-            
-            return {
-                canvas: minimapCanvas,
-                ctx: ctx,
-                update: function() {
-                    ctx.clearRect(0, 0, minimapSize, minimapSize);
-                    
-                    const scale = 2;
-                    const centerX = minimapSize / 2;
-                    const centerY = minimapSize / 2;
-                    
-                    // Draw terrain
-                    const range = 20;
-                    for (let x = -range; x < range; x++) {
-                        for (let z = -range; z < range; z++) {
-                            const worldX = Math.floor(camera.position.x) + x;
-                            const worldZ = Math.floor(camera.position.z) + z;
-                            const height = getTerrainHeight(worldX, worldZ);
-                            
-                            const pixelX = centerX + x * scale;
-                            const pixelY = centerY + z * scale;
-                            
-                            // Color based on height
-                            const heightRatio = height / 40;
-                            ctx.fillStyle = `hsl(${120 * heightRatio}, 50%, ${30 + heightRatio * 30}%)`;
-                            ctx.fillRect(pixelX, pixelY, scale, scale);
-                        }
-                    }
-                    
-                    // Draw enemies
-                    ctx.fillStyle = 'red';
-                    gameState.enemies.forEach(enemy => {
-                        const relX = enemy.mesh.position.x - camera.position.x;
-                        const relZ = enemy.mesh.position.z - camera.position.z;
-                        const pixelX = centerX + relX * scale;
-                        const pixelY = centerY + relZ * scale;
-                        ctx.fillRect(pixelX - 2, pixelY - 2, 4, 4);
-                    });
-                    
-                    // Draw player
-                    ctx.fillStyle = 'blue';
-                    ctx.fillRect(centerX - 3, centerY - 3, 6, 6);
-                    
-                    // Draw player direction
-                    const direction = new THREE.Vector3();
-                    camera.getWorldDirection(direction);
-                    ctx.strokeStyle = 'blue';
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.moveTo(centerX, centerY);
-                    ctx.lineTo(centerX + direction.x * 15, centerY + direction.z * 15);
-                    ctx.stroke();
-                }
-            };
-        }
-        
-        const minimap = createMinimap();
 
         // Animation loop
+        const clock = new THREE.Clock();
         function animate() {
+            const delta = clock.getDelta();
             requestAnimationFrame(animate);
 
             if (controls.isLocked) {
-                const delta = 0.016; // ~60fps
-
-                // Apply gravity
                 velocity.y += CONFIG.GRAVITY * delta;
 
-                // Movement input
                 direction.z = Number(moveState.forward) - Number(moveState.backward);
                 direction.x = Number(moveState.right) - Number(moveState.left);
                 direction.normalize();
 
-                // Apply movement with collision detection
                 if (moveState.forward || moveState.backward) {
-                    const moveVector = new THREE.Vector3();
-                    controls.getDirection(moveVector);
-                    moveVector.multiplyScalar(direction.z * CONFIG.PLAYER_SPEED * delta);
-                    
-                    const newPosition = controls.getObject().position.clone().add(moveVector);
-                    if (!checkTerrainCollision(newPosition)) {
-                        velocity.z = -direction.z * CONFIG.PLAYER_SPEED;
-                    } else {
-                        velocity.z = 0;
-                    }
+                    velocity.z = -direction.z * CONFIG.PLAYER_SPEED;
                 }
 
                 if (moveState.left || moveState.right) {
-                    const strafeVector = new THREE.Vector3();
-                    controls.getDirection(strafeVector);
-                    strafeVector.cross(controls.getObject().up).normalize();
-                    strafeVector.multiplyScalar(-direction.x * CONFIG.PLAYER_SPEED * delta);
-                    
-                    const newPosition = controls.getObject().position.clone().add(strafeVector);
-                    if (!checkTerrainCollision(newPosition)) {
-                        velocity.x = -direction.x * CONFIG.PLAYER_SPEED;
-                    } else {
-                        velocity.x = 0;
-                    }
+                    velocity.x = -direction.x * CONFIG.PLAYER_SPEED;
                 }
 
-                // Apply movement
                 controls.moveRight(-velocity.x * delta);
                 controls.moveForward(-velocity.z * delta);
                 
-                // Handle vertical movement
                 const playerObject = controls.getObject();
                 const oldY = playerObject.position.y;
                 playerObject.position.y += velocity.y * delta;
 
-                // Ground collision
                 const terrainHeight = getTerrainHeight(playerObject.position.x, playerObject.position.z);
                 if (playerObject.position.y <= terrainHeight + CONFIG.PLAYER_HEIGHT) {
                     playerObject.position.y = terrainHeight + CONFIG.PLAYER_HEIGHT;
@@ -1110,45 +1401,24 @@
                     moveState.canJump = true;
                 }
 
-                // Check ceiling collision
-                if (checkTerrainCollision(new THREE.Vector3(
-                    playerObject.position.x,
-                    playerObject.position.y + CONFIG.PLAYER_HEIGHT * 0.5,
-                    playerObject.position.z
-                ))) {
-                    playerObject.position.y = oldY;
-                    velocity.y = Math.min(0, velocity.y);
-                }
-
-                // Damping
                 velocity.x -= velocity.x * 10.0 * delta;
                 velocity.z -= velocity.z * 10.0 * delta;
-            }
 
-            // Update enemies
-            gameState.enemies.forEach(enemy => {
-                enemy.update(0.016, camera.position);
-            });
+                // Send input to server
+                if (networkManager && networkManager.isConnected) {
+                    networkManager.sendPlayerInput(moveState, playerObject.position, camera.rotation);
+                }
+            }
 
             // Update bullets
-            gameState.bullets = gameState.bullets.filter(bullet => bullet.update(0.016));
+            gameState.bullets = gameState.bullets.filter(bullet => bullet.update(delta));
 
-            // Update chunks
+            // Update networking
+            if (networkManager) {
+                networkManager.update();
+            }
+
             updateChunks();
-
-            // Spawn enemies periodically
-            if (Math.random() < 0.001 && gameState.enemies.length < 10) {
-                spawnEnemy();
-            }
-
-            // Auto-reload when ammo is empty
-            if (gameState.ammo === 0 && gameState.totalAmmo > 0 && !weaponSystem.isReloading) {
-                setTimeout(() => weaponSystem.reload(), 1000);
-            }
-
-            // Update minimap
-            minimap.update();
-
             updateStats();
             renderer.render(scene, camera);
         }
@@ -1162,30 +1432,13 @@
 
         window.addEventListener('resize', onWindowResize);
 
-        // Environmental damage check
-        function checkEnvironmentalDamage() {
-            const playerPos = camera.position;
-            const blockType = voxelWorld.getBlockType(
-                Math.floor(playerPos.x),
-                Math.floor(playerPos.y - CONFIG.PLAYER_HEIGHT * 0.8),
-                Math.floor(playerPos.z)
-            );
-            
-            if (blockType === BLOCK_TYPES.WATER) {
-                gameState.health -= 5;
-                updateHealthBar();
-            }
-        }
-
-        // Environmental damage check every second
-        setInterval(checkEnvironmentalDamage, 1000);
-
         // Initialize the game
+        console.log('🎮 Initializing Multiplayer Voxel FPS...');
         initializeWorld().then(() => {
             animate();
-            console.log('Enhanced Voxel FPS Game initialized successfully!');
-            console.log('Features: Procedural world generation, weapon system, enemy AI, minimap');
-            console.log('Click to lock controls, WASD to move, mouse to look, click to shoot, R to reload');
+            console.log('🚀 Game ready!');
+            console.log('🌐 Multiplayer: Socket.IO with WebSocket transport');
+            console.log('🎯 Controls: Click to lock, WASD to move, mouse to look, click to shoot, R to reload');
         });
 
     </script>
