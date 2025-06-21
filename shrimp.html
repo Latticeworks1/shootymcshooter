@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Shrimp Boat with Physics Nets</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #001122 0%, #003366 50%, #87CEEB 100%);
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+        }
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 30, 60, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            color: #88ccff;
+            z-index: 1000;
+            border: 2px solid #0088cc;
+            backdrop-filter: blur(15px);
+            min-width: 320px;
+            box-shadow: 0 0 30px rgba(0, 136, 204, 0.3);
+        }
+        .control-section {
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #004488;
+        }
+        .control-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+        .control-group {
+            margin-bottom: 15px;
+        }
+        .control-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #66aadd;
+            font-weight: bold;
+        }
+        input[type="range"] {
+            width: 100%;
+            margin-bottom: 5px;
+            background: #002244;
+            border-radius: 6px;
+            appearance: none;
+            height: 6px;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #0088cc;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 8px rgba(0, 136, 204, 0.6);
+        }
+        .value-display {
+            font-size: 12px;
+            color: #88ccff;
+            font-weight: bold;
+            text-align: right;
+        }
+        button {
+            background: linear-gradient(135deg, #002244 0%, #004488 100%);
+            color: #88ccff;
+            border: 2px solid #0088cc;
+            padding: 12px 16px;
+            cursor: pointer;
+            border-radius: 8px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            font-family: inherit;
+            font-size: 10px;
+            text-transform: uppercase;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            letter-spacing: 1px;
+        }
+        button:hover {
+            background: linear-gradient(135deg, #004488 0%, #0066cc 100%);
+            box-shadow: 0 0 15px rgba(0, 136, 204, 0.5);
+            transform: translateY(-2px);
+        }
+        button.active {
+            background: linear-gradient(135deg, #0088cc 0%, #00aaff 100%);
+            color: #001122;
+            box-shadow: 0 0 20px rgba(0, 136, 204, 0.8);
+        }
+        #telemetry {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #88ccff;
+            font-size: 11px;
+            background: rgba(0, 30, 60, 0.95);
+            padding: 15px;
+            border-radius: 12px;
+            border: 2px solid #0088cc;
+            backdrop-filter: blur(15px);
+            min-width: 350px;
+        }
+        .telemetry-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .telemetry-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid #002244;
+        }
+        .telemetry-label {
+            color: #66aadd;
+            text-transform: uppercase;
+            font-size: 10px;
+        }
+        .telemetry-value {
+            color: #88ccff;
+            font-weight: bold;
+        }
+        #performance {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #ffaa44;
+            font-size: 10px;
+            background: rgba(40, 30, 0, 0.9);
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #ff8800;
+            backdrop-filter: blur(15px);
+            min-width: 200px;
+        }
+        .perf-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        h3 {
+            margin: 0 0 15px 0;
+            color: #88ccff;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-on { background: #00ff44; }
+        .status-off { background: #ff4444; }
+        .status-warning { background: #ffaa00; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="controls">
+            <h3>Vessel Command Center</h3>
+            
+            <div class="control-section">
+                <div class="control-group">
+                    <label>Engine Power</label>
+                    <input type="range" id="enginePower" min="0" max="100" value="0" step="5">
+                    <div class="value-display"><span id="powerValue">0</span>%</div>
+                </div>
+                <div class="control-group">
+                    <label>Rudder Angle</label>
+                    <input type="range" id="rudderAngle" min="-30" max="30" value="0" step="2">
+                    <div class="value-display"><span id="rudderValue">0</span>°</div>
+                </div>
+                <div class="control-group">
+                    <label>Net Deployment</label>
+                    <input type="range" id="netDeployment" min="0" max="100" value="0" step="10">
+                    <div class="value-display"><span id="netValue">0</span>%</div>
+                </div>
+                <div class="control-group">
+                    <label>Outrigger Spread</label>
+                    <input type="range" id="outriggerSpread" min="0" max="100" value="50" step="10">
+                    <div class="value-display"><span id="outriggerValue">50</span>%</div>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <div class="control-group">
+                    <button id="startEngine">Start Engine</button>
+                    <button id="stopEngine" class="active">Stop Engine</button>
+                </div>
+                <div class="control-group">
+                    <button id="deployNets">Deploy Nets</button>
+                    <button id="retrieveNets">Retrieve Nets</button>
+                </div>
+                <div class="control-group">
+                    <button id="toggleWireframe">Wireframe</button>
+                    <button id="nightMode">Night Mode</button>
+                </div>
+            </div>
+            
+            <div class="control-section">
+                <div class="control-group">
+                    <label>Camera Mode</label>
+                    <button id="cameraFollow" class="active">Follow</button>
+                    <button id="cameraFree">Free</button>
+                    <button id="cameraDeck">Deck</button>
+                </div>
+            </div>
+        </div>
+        
+        <div id="telemetry">
+            <h3>Navigation & Systems</h3>
+            <div class="telemetry-grid">
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Speed</span>
+                    <span class="telemetry-value" id="vesselSpeed">0.0 kts</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Heading</span>
+                    <span class="telemetry-value" id="vesselHeading">000°</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Depth</span>
+                    <span class="telemetry-value" id="waterDepth">42.5m</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Engine</span>
+                    <span class="telemetry-value">
+                        <span class="status-indicator status-off" id="engineStatus"></span>
+                        <span id="engineState">OFF</span>
+                    </span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Nets</span>
+                    <span class="telemetry-value" id="netStatus">STOWED</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Catch</span>
+                    <span class="telemetry-value" id="catchWeight">0 kg</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">Fuel</span>
+                    <span class="telemetry-value" id="fuelLevel">95%</span>
+                </div>
+                <div class="telemetry-item">
+                    <span class="telemetry-label">GPS</span>
+                    <span class="telemetry-value" id="gpsCoords">29.3°N 90.1°W</span>
+                </div>
+            </div>
+        </div>
+        
+        <div id="performance">
+            <h3 style="color: #ffaa44; font-size: 12px;">Performance</h3>
+            <div class="perf-item">
+                <span>FPS:</span>
+                <span id="fps">60</span>
+            </div>
+            <div class="perf-item">
+                <span>Vertices:</span>
+                <span id="vertexCount">0</span>
+            </div>
+            <div class="perf-item">
+                <span>Triangles:</span>
+                <span id="triangles">0</span>
+            </div>
+            <div class="perf-item">
+                <span>Net Physics:</span>
+                <span id="netPhysics">IDLE</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        /**
+         * Professional Shrimp Boat Simulation with Physics-Based Nets
+         * Based on Subsurface Engine architecture patterns
+         */
+        class ShrimpBoatSimulation {
+            constructor() {
+                // Core Three.js infrastructure
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+                this.renderer = new THREE.WebGLRenderer({ 
+                    antialias: true,
+                    powerPreference: "high-performance"
+                });
+                
+                // Advanced renderer configuration
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                this.renderer.setClearColor(0x87CEEB, 1);
+                this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+                this.renderer.toneMappingExposure = 1.0;
+                document.getElementById('container').appendChild(this.renderer.domElement);
+                
+                // Vessel state management - following ECS patterns
+                this.vesselState = {
+                    position: new THREE.Vector3(0, 0, 0),
+                    rotation: new THREE.Euler(0, 0, 0),
+                    velocity: new THREE.Vector3(0, 0, 0),
+                    heading: 0,
+                    speed: 0,
+                    enginePower: 0,
+                    rudderAngle: 0,
+                    isEngineRunning: false,
+                    netDeployment: 0,
+                    outriggerSpread: 50,
+                    fuel: 95,
+                    catchWeight: 0,
+                    waterDepth: 42.5
+                };
+                
+                // Component storage - modular architecture
+                this.components = {
+                    boat: null,
+                    hull: null,
+                    cabin: null,
+                    nets: { left: null, right: null },
+                    outriggers: { left: null, right: null },
+                    ocean: null,
+                    propeller: null,
+                    rudder: null
+                };
+                
+                // Physics configuration for nets
+                this.netPhysics = {
+                    enabled: true,
+                    particles: { left: [], right: [] },
+                    constraints: { left: [], right: [] },
+                    stiffness: 0.8,
+                    damping: 0.95,
+                    gravity: new THREE.Vector3(0, -0.5, 0),
+                    waterResistance: 0.1
+                };
+                
+                // Camera system
+                this.cameraSystem = {
+                    mode: 'follow',
+                    followOffset: new THREE.Vector3(0, 15, 30),
+                    deckOffset: new THREE.Vector3(0, 3, 5),
+                    freeCamera: false,
+                    controls: null
+                };
+                
+                // Environment state
+                this.environment = {
+                    timeOfDay: 12, // 24-hour format
+                    weather: 'clear',
+                    waveHeight: 0.5,
+                    windDirection: new THREE.Vector3(1, 0, 0.3).normalize(),
+                    windSpeed: 0.3
+                };
+                
+                // Performance tracking
+                this.performance = {
+                    frameCount: 0,
+                    lastTime: 0,
+                    fps: 0,
+                    vertexCount: 0
+                };
+                
+                this.initializeEngine();
+                this.createEnvironment();
+                this.buildShrimpBoat();
+                this.createPhysicsNets();
+                this.setupControls();
+                this.startSimulation();
+                
+                console.log('Advanced Shrimp Boat Simulation initialized');
+            }
+            
+            initializeEngine() {
+                // Advanced lighting setup
+                this.setupLighting();
+                
+                // Camera positioning
+                this.camera.position.copy(this.cameraSystem.followOffset);
+                this.camera.lookAt(0, 0, 0);
+                
+                // Mouse and keyboard controls
+                this.setupInteractionControls();
+            }
+            
+            setupLighting() {
+                // Ambient lighting for general illumination
+                const ambientLight = new THREE.AmbientLight(0x87CEEB, 0.4);
+                this.scene.add(ambientLight);
+                
+                // Primary sun light
+                const sunLight = new THREE.DirectionalLight(0xffffff, 1.2);
+                sunLight.position.set(100, 100, 50);
+                sunLight.castShadow = true;
+                sunLight.shadow.mapSize.width = 4096;
+                sunLight.shadow.mapSize.height = 4096;
+                sunLight.shadow.camera.near = 1;
+                sunLight.shadow.camera.far = 500;
+                sunLight.shadow.camera.left = -100;
+                sunLight.shadow.camera.right = 100;
+                sunLight.shadow.camera.top = 100;
+                sunLight.shadow.camera.bottom = -100;
+                sunLight.shadow.bias = -0.0001;
+                this.scene.add(sunLight);
+                
+                // Secondary fill light for realistic lighting
+                const fillLight = new THREE.DirectionalLight(0x88aaff, 0.3);
+                fillLight.position.set(-50, 30, -50);
+                this.scene.add(fillLight);
+                
+                // Water reflection light
+                const waterLight = new THREE.HemisphereLight(0x87CEEB, 0x004466, 0.6);
+                this.scene.add(waterLight);
+                
+                this.sunLight = sunLight;
+            }
+            
+            createEnvironment() {
+                // Advanced ocean with realistic waves
+                this.createOcean();
+                
+                // Atmospheric fog for depth
+                this.scene.fog = new THREE.Fog(0x87CEEB, 100, 1500);
+                
+                // Skybox or procedural sky
+                this.createSky();
+                
+                // Floating debris and seabirds for atmosphere
+                this.createAtmosphericElements();
+            }
+            
+            createOcean() {
+                const oceanGeometry = new THREE.PlaneGeometry(3000, 3000, 200, 200);
+                
+                // Create realistic water material
+                const oceanMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x006994,
+                    transparent: true,
+                    opacity: 0.85,
+                    shininess: 200,
+                    specular: 0x87CEEB
+                });
+                
+                this.components.ocean = new THREE.Mesh(oceanGeometry, oceanMaterial);
+                this.components.ocean.rotation.x = -Math.PI / 2;
+                this.components.ocean.position.y = -2;
+                this.components.ocean.receiveShadow = true;
+                this.scene.add(this.components.ocean);
+                
+                // Store original vertices for wave animation
+                this.oceanVertices = this.components.ocean.geometry.attributes.position.array;
+                this.oceanOriginalVertices = Float32Array.from(this.oceanVertices);
+            }
+            
+            createSky() {
+                // Simple gradient sky using shader or hemisphere light
+                const skyGeometry = new THREE.SphereGeometry(1500, 32, 15);
+                const skyMaterial = new THREE.MeshBasicMaterial({
+                    color: 0x87CEEB,
+                    side: THREE.BackSide,
+                    fog: false
+                });
+                
+                const sky = new THREE.Mesh(skyGeometry, skyMaterial);
+                this.scene.add(sky);
+            }
+            
+            createAtmosphericElements() {
+                // Seabirds
+                this.createSeabirds();
+                
+                // Floating debris
+                this.createFloatingDebris();
+            }
+            
+            createSeabirds() {
+                const birdGroup = new THREE.Group();
+                
+                for (let i = 0; i < 8; i++) {
+                    // Simple bird geometry
+                    const birdGeometry = new THREE.ConeGeometry(0.4, 1.2, 3);
+                    const birdMaterial = new THREE.MeshPhongMaterial({ 
+                        color: 0xffffff,
+                        shininess: 10
+                    });
+                    const bird = new THREE.Mesh(birdGeometry, birdMaterial);
+                    
+                    bird.position.set(
+                        (Math.random() - 0.5) * 400,
+                        15 + Math.random() * 25,
+                        (Math.random() - 0.5) * 400
+                    );
+                    bird.rotation.z = Math.PI / 2;
+                    bird.userData = {
+                        speed: 0.5 + Math.random() * 1.5,
+                        phase: Math.random() * Math.PI * 2
+                    };
+                    
+                    birdGroup.add(bird);
+                }
+                
+                this.scene.add(birdGroup);
+                this.components.seabirds = birdGroup;
+            }
+            
+            createFloatingDebris() {
+                const debrisGroup = new THREE.Group();
+                
+                for (let i = 0; i < 12; i++) {
+                    const debrisGeometry = new THREE.BoxGeometry(
+                        0.5 + Math.random() * 2,
+                        0.2 + Math.random() * 0.3,
+                        0.8 + Math.random() * 1.5
+                    );
+                    const debrisMaterial = new THREE.MeshPhongMaterial({
+                        color: new THREE.Color().setHSL(0.1, 0.3, 0.3 + Math.random() * 0.4)
+                    });
+                    const debris = new THREE.Mesh(debrisGeometry, debrisMaterial);
+                    
+                    debris.position.set(
+                        (Math.random() - 0.5) * 200,
+                        -1.5,
+                        (Math.random() - 0.5) * 200
+                    );
+                    debris.rotation.y = Math.random() * Math.PI * 2;
+                    debris.castShadow = true;
+                    
+                    debrisGroup.add(debris);
+                }
+                
+                this.scene.add(debrisGroup);
+                this.components.debris = debrisGroup;
+            }
+            
+            buildShrimpBoat() {
+                // Main boat assembly
+                this.components.boat = new THREE.Group();
+                
+                // Build each component systematically
+                this.createHull();
+                this.createDeck();
+                this.createCabin();
+                this.createMastAndRigging();
+                this.createOutriggers();
+                this.createPropulsionSystem();
+                this.createWorkingEquipment();
+                
+                // Position boat at water level
+                this.components.boat.position.y = 0;
+                this.scene.add(this.components.boat);
+            }
+            
+            createHull() {
+                // Advanced hull geometry with realistic boat shape
+                const hullGeometry = new THREE.BoxGeometry(4, 1.5, 16);
+                
+                // Modify vertices for realistic boat hull shape
+                const hullPositions = hullGeometry.attributes.position.array;
+                for (let i = 0; i < hullPositions.length; i += 3) {
+                    const x = hullPositions[i];
+                    const y = hullPositions[i + 1];
+                    const z = hullPositions[i + 2];
+                    
+                    // Taper bow and stern
+                    if (Math.abs(z) > 6) {
+                        hullPositions[i] *= (8 - Math.abs(z)) / 2;
+                    }
+                    
+                    // V-shaped hull bottom
+                    if (y < 0) {
+                        hullPositions[i + 1] -= Math.abs(x) * 0.4;
+                    }
+                    
+                    // Slightly curved sides
+                    if (Math.abs(x) > 1.5) {
+                        hullPositions[i + 1] += Math.abs(x) * 0.1;
+                    }
+                }
+                hullGeometry.attributes.position.needsUpdate = true;
+                hullGeometry.computeVertexNormals();
+                
+                const hullMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xffffff,
+                    shininess: 40,
+                    specular: 0x666666
+                });
+                
+                this.components.hull = new THREE.Mesh(hullGeometry, hullMaterial);
+                this.components.hull.castShadow = true;
+                this.components.hull.receiveShadow = true;
+                this.components.boat.add(this.components.hull);
+            }
+            
+            createDeck() {
+                // Main deck
+                const deckGeometry = new THREE.BoxGeometry(3.8, 0.15, 15);
+                const deckMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x8B4513,
+                    shininess: 10,
+                    specular: 0x444444
+                });
+                
+                const deck = new THREE.Mesh(deckGeometry, deckMaterial);
+                deck.position.y = 0.8;
+                deck.castShadow = true;
+                deck.receiveShadow = true;
+                this.components.boat.add(deck);
+                
+                // Fore deck
+                const foreDeckGeometry = new THREE.BoxGeometry(3, 0.15, 4);
+                const foreDeck = new THREE.Mesh(foreDeckGeometry, deckMaterial);
+                foreDeck.position.set(0, 0.8, 6);
+                foreDeck.castShadow = true;
+                this.components.boat.add(foreDeck);
+                
+                // Stern working deck
+                const sternDeckGeometry = new THREE.BoxGeometry(3.5, 0.15, 6);
+                const sternDeck = new THREE.Mesh(sternDeckGeometry, deckMaterial);
+                sternDeck.position.set(0, 0.8, -5);
+                sternDeck.castShadow = true;
+                this.components.boat.add(sternDeck);
+            }
+            
+            createCabin() {
+                // Main cabin structure
+                const cabinGeometry = new THREE.BoxGeometry(3, 3, 5);
+                const cabinMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xffffff,
+                    shininess: 30
+                });
+                
+                this.components.cabin = new THREE.Mesh(cabinGeometry, cabinMaterial);
+                this.components.cabin.position.set(0, 2.2, 3);
+                this.components.cabin.castShadow = true;
+                this.components.boat.add(this.components.cabin);
+                
+                // Cabin roof
+                const roofGeometry = new THREE.BoxGeometry(3.2, 0.2, 5.2);
+                const roofMaterial = new THREE.MeshPhongMaterial({
+                    color: 0xcccccc,
+                    shininess: 50
+                });
+                const roof = new THREE.Mesh(roofGeometry, roofMaterial);
+                roof.position.set(0, 3.7, 3);
+                roof.castShadow = true;
+                this.components.boat.add(roof);
+                
+                // Wheelhouse on top
+                const wheelhouseGeometry = new THREE.BoxGeometry(2.5, 2, 3);
+                const wheelhouse = new THREE.Mesh(wheelhouseGeometry, cabinMaterial);
+                wheelhouse.position.set(0, 4.9, 3.5);
+                wheelhouse.castShadow = true;
+                this.components.boat.add(wheelhouse);
+                
+                // Create realistic glass windows
+                this.createCabinWindows();
+            }
+            
+            createCabinWindows() {
+                const glassMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x87CEEB,
+                    transparent: true,
+                    opacity: 0.4,
+                    shininess: 100,
+                    specular: 0xffffff,
+                    reflectivity: 0.3
+                });
+                
+                // Front wheelhouse windows
+                const frontWindowGeometry = new THREE.BoxGeometry(2.3, 1.5, 0.05);
+                const frontWindow = new THREE.Mesh(frontWindowGeometry, glassMaterial);
+                frontWindow.position.set(0, 4.9, 5.02);
+                this.components.boat.add(frontWindow);
+                
+                // Side wheelhouse windows
+                const sideWindowGeometry = new THREE.BoxGeometry(0.05, 1.5, 2.8);
+                
+                const leftWindow = new THREE.Mesh(sideWindowGeometry, glassMaterial);
+                leftWindow.position.set(-1.27, 4.9, 3.5);
+                this.components.boat.add(leftWindow);
+                
+                const rightWindow = new THREE.Mesh(sideWindowGeometry, glassMaterial);
+                rightWindow.position.set(1.27, 4.9, 3.5);
+                this.components.boat.add(rightWindow);
+                
+                // Main cabin windows
+                const cabinWindowGeometry = new THREE.BoxGeometry(2.5, 1, 0.05);
+                
+                // Front cabin window
+                const cabinFrontWindow = new THREE.Mesh(cabinWindowGeometry, glassMaterial);
+                cabinFrontWindow.position.set(0, 2.2, 5.52);
+                this.components.boat.add(cabinFrontWindow);
+                
+                // Side cabin windows
+                const cabinSideWindowGeometry = new THREE.BoxGeometry(0.05, 1, 4.5);
+                
+                const cabinLeftWindow = new THREE.Mesh(cabinSideWindowGeometry, glassMaterial);
+                cabinLeftWindow.position.set(-1.52, 2.2, 3);
+                this.components.boat.add(cabinLeftWindow);
+                
+                const cabinRightWindow = new THREE.Mesh(cabinSideWindowGeometry, glassMaterial);
+                cabinRightWindow.position.set(1.52, 2.2, 3);
+                this.components.boat.add(cabinRightWindow);
+                
+                // Door
+                const doorGeometry = new THREE.BoxGeometry(1, 2, 0.1);
+                const doorMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x8B4513,
+                    shininess: 20
+                });
+                const door = new THREE.Mesh(doorGeometry, doorMaterial);
+                door.position.set(0.8, 2.2, 0.45);
+                this.components.boat.add(door);
+            }
+            
+            createMastAndRigging() {
+                const metalMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x666666,
+                    shininess: 60,
+                    specular: 0x999999
+                });
+                
+                // Main mast
+                const mastGeometry = new THREE.CylinderGeometry(0.15, 0.15, 12);
+                const mast = new THREE.Mesh(mastGeometry, metalMaterial);
+                mast.position.set(0, 7, 1);
+                mast.castShadow = true;
+                this.components.boat.add(mast);
+                
+                // Boom arms for net deployment
+                const boomGeometry = new THREE.CylinderGeometry(0.1, 0.1, 8);
+                
+                // Left boom
+                const leftBoom = new THREE.Mesh(boomGeometry, metalMaterial);
+                leftBoom.position.set(-3, 5, -1);
+                leftBoom.rotation.z = Math.PI / 6;
+                leftBoom.castShadow = true;
+                this.components.boat.add(leftBoom);
+                
+                // Right boom
+                const rightBoom = new THREE.Mesh(boomGeometry, metalMaterial);
+                rightBoom.position.set(3, 5, -1);
+                rightBoom.rotation.z = -Math.PI / 6;
+                rightBoom.castShadow = true;
+                this.components.boat.add(rightBoom);
+                
+                // Crow's nest
+                const nestGeometry = new THREE.CylinderGeometry(0.8, 0.8, 0.3);
+                const nest = new THREE.Mesh(nestGeometry, metalMaterial);
+                nest.position.set(0, 12, 1);
+                nest.castShadow = true;
+                this.components.boat.add(nest);
+                
+                // Navigation lights
+                this.createNavigationLights();
+            }
+            
+            createNavigationLights() {
+                // Port light (red) - Use MeshStandardMaterial for proper emissive properties
+                const portLightGeometry = new THREE.SphereGeometry(0.1);
+                const portLightMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xff0000,
+                    emissive: 0xff0000,
+                    emissiveIntensity: 0.8,
+                    metalness: 0.1,
+                    roughness: 0.3
+                });
+                const portLight = new THREE.Mesh(portLightGeometry, portLightMaterial);
+                portLight.position.set(-1.8, 5.5, 4);
+                this.components.boat.add(portLight);
+                
+                // Starboard light (green)
+                const starboardLightGeometry = new THREE.SphereGeometry(0.1);
+                const starboardLightMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0x00ff00,
+                    emissive: 0x00ff00,
+                    emissiveIntensity: 0.8,
+                    metalness: 0.1,
+                    roughness: 0.3
+                });
+                const starboardLight = new THREE.Mesh(starboardLightGeometry, starboardLightMaterial);
+                starboardLight.position.set(1.8, 5.5, 4);
+                this.components.boat.add(starboardLight);
+                
+                // Masthead light (white)
+                const mastheadLightGeometry = new THREE.SphereGeometry(0.08);
+                const mastheadLightMaterial = new THREE.MeshStandardMaterial({ 
+                    color: 0xffffff,
+                    emissive: 0xffffff,
+                    emissiveIntensity: 1.0,
+                    metalness: 0.1,
+                    roughness: 0.2
+                });
+                const mastheadLight = new THREE.Mesh(mastheadLightGeometry, mastheadLightMaterial);
+                mastheadLight.position.set(0, 13, 1);
+                this.components.boat.add(mastheadLight);
+                
+                // Add actual point lights for realistic lighting effects
+                this.addNavigationPointLights();
+            }
+            
+            addNavigationPointLights() {
+                // Port light point light
+                const portPointLight = new THREE.PointLight(0xff0000, 0.5, 10);
+                portPointLight.position.set(-1.8, 5.5, 4);
+                this.components.boat.add(portPointLight);
+                
+                // Starboard light point light
+                const starboardPointLight = new THREE.PointLight(0x00ff00, 0.5, 10);
+                starboardPointLight.position.set(1.8, 5.5, 4);
+                this.components.boat.add(starboardPointLight);
+                
+                // Masthead light point light
+                const mastheadPointLight = new THREE.PointLight(0xffffff, 0.8, 15);
+                mastheadPointLight.position.set(0, 13, 1);
+                this.components.boat.add(mastheadPointLight);
+                
+                // Store references for potential day/night control
+                this.navigationLights = {
+                    port: portPointLight,
+                    starboard: starboardPointLight,
+                    masthead: mastheadPointLight
+                };
+            }
+            
+            createOutriggers() {
+                const outriggerMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x444444,
+                    shininess: 40
+                });
+                
+                // Outrigger poles (extending from boat sides)
+                const poleGeometry = new THREE.CylinderGeometry(0.08, 0.08, 12);
+                
+                // Left outrigger pole
+                const leftPole = new THREE.Mesh(poleGeometry, outriggerMaterial);
+                leftPole.position.set(-6, 2, -2);
+                leftPole.rotation.z = Math.PI / 2;
+                leftPole.castShadow = true;
+                this.components.boat.add(leftPole);
+                
+                // Right outrigger pole
+                const rightPole = new THREE.Mesh(poleGeometry, outriggerMaterial);
+                rightPole.position.set(6, 2, -2);
+                rightPole.rotation.z = Math.PI / 2;
+                rightPole.castShadow = true;
+                this.components.boat.add(rightPole);
+                
+                // Outrigger doors (net deployment doors)
+                const doorGeometry = new THREE.BoxGeometry(3, 1.5, 0.2);
+                
+                this.components.outriggers.left = new THREE.Mesh(doorGeometry, outriggerMaterial);
+                this.components.outriggers.left.position.set(-8, 2, -2);
+                this.components.outriggers.left.castShadow = true;
+                this.components.boat.add(this.components.outriggers.left);
+                
+                this.components.outriggers.right = new THREE.Mesh(doorGeometry, outriggerMaterial);
+                this.components.outriggers.right.position.set(8, 2, -2);
+                this.components.outriggers.right.castShadow = true;
+                this.components.boat.add(this.components.outriggers.right);
+            }
+            
+            createPropulsionSystem() {
+                const metalMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x333333,
+                    shininess: 80
+                });
+                
+                // Engine exhaust stack
+                const stackGeometry = new THREE.CylinderGeometry(0.3, 0.3, 4);
+                const exhaust = new THREE.Mesh(stackGeometry, metalMaterial);
+                exhaust.position.set(0.8, 4, 0);
+                exhaust.castShadow = true;
+                this.components.boat.add(exhaust);
+                
+                // Rudder
+                const rudderGeometry = new THREE.BoxGeometry(0.3, 3, 1.5);
+                this.components.rudder = new THREE.Mesh(rudderGeometry, metalMaterial);
+                this.components.rudder.position.set(0, -1.5, -7.5);
+                this.components.rudder.castShadow = true;
+                this.components.boat.add(this.components.rudder);
+                
+                // Propeller
+                const propGeometry = new THREE.CylinderGeometry(1.2, 1.2, 0.3, 4);
+                this.components.propeller = new THREE.Mesh(propGeometry, metalMaterial);
+                this.components.propeller.position.set(0, -1, -7.8);
+                this.components.propeller.rotation.x = Math.PI / 2;
+                this.components.propeller.castShadow = true;
+                this.components.boat.add(this.components.propeller);
+                
+                // Propeller shaft
+                const shaftGeometry = new THREE.CylinderGeometry(0.1, 0.1, 3);
+                const shaft = new THREE.Mesh(shaftGeometry, metalMaterial);
+                shaft.position.set(0, -1, -6.5);
+                shaft.rotation.x = Math.PI / 2;
+                this.components.boat.add(shaft);
+            }
+            
+            createWorkingEquipment() {
+                const equipmentMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x666666,
+                    shininess: 50
+                });
+                
+                // Winches for net operation
+                const winchGeometry = new THREE.CylinderGeometry(0.6, 0.6, 1.2);
+                
+                const leftWinch = new THREE.Mesh(winchGeometry, equipmentMaterial);
+                leftWinch.position.set(-1.5, 1.5, -4);
+                leftWinch.rotation.z = Math.PI / 2;
+                leftWinch.castShadow = true;
+                this.components.boat.add(leftWinch);
+                
+                const rightWinch = new THREE.Mesh(winchGeometry, equipmentMaterial);
+                rightWinch.position.set(1.5, 1.5, -4);
+                rightWinch.rotation.z = Math.PI / 2;
+                rightWinch.castShadow = true;
+                this.components.boat.add(rightWinch);
+                
+                // Sorting table
+                const tableGeometry = new THREE.BoxGeometry(2.5, 0.1, 3);
+                const tableMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x888888,
+                    shininess: 30
+                });
+                const sortingTable = new THREE.Mesh(tableGeometry, tableMaterial);
+                sortingTable.position.set(0, 1.5, -3);
+                sortingTable.castShadow = true;
+                this.components.boat.add(sortingTable);
+                
+                // Ice hold covers
+                const holdGeometry = new THREE.BoxGeometry(1.5, 0.2, 2);
+                const holdMaterial = new THREE.MeshPhongMaterial({
+                    color: 0x555555,
+                    shininess: 20
+                });
+                
+                const hold1 = new THREE.Mesh(holdGeometry, holdMaterial);
+                hold1.position.set(-1, 1, -1);
+                hold1.castShadow = true;
+                this.components.boat.add(hold1);
+                
+                const hold2 = new THREE.Mesh(holdGeometry, holdMaterial);
+                hold2.position.set(1, 1, -1);
+                hold2.castShadow = true;
+                this.components.boat.add(hold2);
+            }
+            
+            createPhysicsNets() {
+                // Initialize physics-based nets with spring-mass system
+                this.initializeNetPhysics('left');
+                this.initializeNetPhysics('right');
+                this.createNetMeshes();
+            }
+            
+            initializeNetPhysics(side) {
+                const netResolution = 12;
+                const netWidth = 4;
+                const netHeight = 6;
+                const particles = [];
+                const constraints = [];
+                
+                // Create particle grid for net
+                for (let y = 0; y <= netResolution; y++) {
+                    for (let x = 0; x <= netResolution; x++) {
+                        const xOffset = side === 'left' ? -8 : 8;
+                        const particle = {
+                            position: new THREE.Vector3(
+                                xOffset + (x / netResolution - 0.5) * netWidth,
+                                2 - (y / netResolution) * netHeight,
+                                -2 - y * 0.3
+                            ),
+                            oldPosition: new THREE.Vector3(),
+                            velocity: new THREE.Vector3(),
+                            mass: 0.1,
+                            pinned: y === 0, // Pin top row
+                            index: y * (netResolution + 1) + x
+                        };
+                        
+                        particle.oldPosition.copy(particle.position);
+                        particles.push(particle);
+                    }
+                }
+                
+                // Create constraints (springs) between particles
+                for (let y = 0; y <= netResolution; y++) {
+                    for (let x = 0; x <= netResolution; x++) {
+                        const index = y * (netResolution + 1) + x;
+                        
+                        // Horizontal constraints
+                        if (x < netResolution) {
+                            const rightIndex = index + 1;
+                            constraints.push({
+                                particleA: index,
+                                particleB: rightIndex,
+                                restLength: particles[index].position.distanceTo(particles[rightIndex].position),
+                                stiffness: this.netPhysics.stiffness
+                            });
+                        }
+                        
+                        // Vertical constraints
+                        if (y < netResolution) {
+                            const downIndex = index + (netResolution + 1);
+                            constraints.push({
+                                particleA: index,
+                                particleB: downIndex,
+                                restLength: particles[index].position.distanceTo(particles[downIndex].position),
+                                stiffness: this.netPhysics.stiffness
+                            });
+                        }
+                        
+                        // Diagonal constraints for stability
+                        if (x < netResolution && y < netResolution) {
+                            const diagIndex = index + (netResolution + 1) + 1;
+                            constraints.push({
+                                particleA: index,
+                                particleB: diagIndex,
+                                restLength: particles[index].position.distanceTo(particles[diagIndex].position),
+                                stiffness: this.netPhysics.stiffness * 0.7
+                            });
+                        }
+                    }
+                }
+                
+                this.netPhysics.particles[side] = particles;
+                this.netPhysics.constraints[side] = constraints;
+                
+                console.log(`Initialized ${side} net with ${particles.length} particles and ${constraints.length} constraints`);
+            }
+            
+            createNetMeshes() {
+                ['left', 'right'].forEach(side => {
+                    const particles = this.netPhysics.particles[side];
+                    const netResolution = 12;
+                    
+                    // Create net geometry
+                    const vertices = [];
+                    const indices = [];
+                    
+                    particles.forEach(particle => {
+                        vertices.push(particle.position.x, particle.position.y, particle.position.z);
+                    });
+                    
+                    // Create triangle indices for net mesh
+                    for (let y = 0; y < netResolution; y++) {
+                        for (let x = 0; x < netResolution; x++) {
+                            const a = y * (netResolution + 1) + x;
+                            const b = a + 1;
+                            const c = a + (netResolution + 1);
+                            const d = c + 1;
+                            
+                            // Two triangles per quad
+                            indices.push(a, c, b);
+                            indices.push(b, c, d);
+                        }
+                    }
+                    
+                    const netGeometry = new THREE.BufferGeometry();
+                    netGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                    netGeometry.setIndex(indices);
+                    netGeometry.computeVertexNormals();
+                    
+                    const netMaterial = new THREE.MeshPhongMaterial({
+                        color: 0x2F4F2F,
+                        side: THREE.DoubleSide,
+                        transparent: true,
+                        opacity: 0.8,
+                        wireframe: false
+                    });
+                    
+                    this.components.nets[side] = new THREE.Mesh(netGeometry, netMaterial);
+                    this.components.nets[side].castShadow = true;
+                    this.components.nets[side].visible = false; // Initially stowed
+                    this.components.boat.add(this.components.nets[side]);
+                });
+            }
+            
+            updateNetPhysics(deltaTime) {
+                if (!this.netPhysics.enabled) return;
+                
+                ['left', 'right'].forEach(side => {
+                    const particles = this.netPhysics.particles[side];
+                    const constraints = this.netPhysics.constraints[side];
+                    
+                    if (!particles || particles.length === 0) return;
+                    
+                    // Verlet integration for particles
+                    particles.forEach(particle => {
+                        if (particle.pinned) return;
+                        
+                        // Apply forces
+                        const force = new THREE.Vector3();
+                        
+                        // Gravity
+                        force.add(this.netPhysics.gravity.clone().multiplyScalar(particle.mass));
+                        
+                        // Water resistance
+                        if (particle.position.y < -1) {
+                            const resistance = particle.velocity.clone().multiplyScalar(-this.netPhysics.waterResistance);
+                            force.add(resistance);
+                        }
+                        
+                        // Current from boat movement
+                        if (this.vesselState.speed > 0.1) {
+                            const current = new THREE.Vector3(0, 0, this.vesselState.speed * 0.1);
+                            current.applyEuler(this.vesselState.rotation);
+                            force.add(current);
+                        }
+                        
+                        // Verlet integration
+                        const acceleration = force.divideScalar(particle.mass);
+                        const newPosition = particle.position.clone()
+                            .multiplyScalar(2)
+                            .sub(particle.oldPosition)
+                            .add(acceleration.multiplyScalar(deltaTime * deltaTime));
+                        
+                        particle.oldPosition.copy(particle.position);
+                        particle.position.copy(newPosition);
+                        
+                        // Apply damping
+                        const velocity = particle.position.clone().sub(particle.oldPosition);
+                        velocity.multiplyScalar(this.netPhysics.damping);
+                        particle.oldPosition.copy(particle.position.clone().sub(velocity));
+                    });
+                    
+                    // Satisfy constraints
+                    for (let iteration = 0; iteration < 2; iteration++) {
+                        constraints.forEach(constraint => {
+                            const particleA = particles[constraint.particleA];
+                            const particleB = particles[constraint.particleB];
+                            
+                            if (!particleA || !particleB) return;
+                            
+                            const delta = particleB.position.clone().sub(particleA.position);
+                            const distance = delta.length();
+                            
+                            if (distance === 0) return;
+                            
+                            const difference = (distance - constraint.restLength) / distance;
+                            const correction = delta.multiplyScalar(difference * constraint.stiffness * 0.5);
+                            
+                            if (!particleA.pinned) {
+                                particleA.position.add(correction);
+                            }
+                            if (!particleB.pinned) {
+                                particleB.position.sub(correction);
+                            }
+                        });
+                    }
+                    
+                    // Update net mesh
+                    this.updateNetMesh(side);
+                });
+            }
+            
+            updateNetMesh(side) {
+                const net = this.components.nets[side];
+                const particles = this.netPhysics.particles[side];
+                
+                if (!net || !particles) return;
+                
+                const positions = net.geometry.attributes.position.array;
+                
+                particles.forEach((particle, index) => {
+                    positions[index * 3] = particle.position.x;
+                    positions[index * 3 + 1] = particle.position.y;
+                    positions[index * 3 + 2] = particle.position.z;
+                });
+                
+                net.geometry.attributes.position.needsUpdate = true;
+                net.geometry.computeVertexNormals();
+            }
+            
+            setupInteractionControls() {
+                // Mouse controls for camera
+                let isDragging = false;
+                let previousMousePosition = { x: 0, y: 0 };
+
+                this.renderer.domElement.addEventListener('mousedown', (e) => {
+                    if (this.cameraSystem.mode === 'free') {
+                        isDragging = true;
+                        previousMousePosition = { x: e.clientX, y: e.clientY };
+                    }
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (!isDragging || this.cameraSystem.mode !== 'free') return;
+                    
+                    const deltaX = e.clientX - previousMousePosition.x;
+                    const deltaY = e.clientY - previousMousePosition.y;
+                    
+                    // Rotate camera around boat
+                    const spherical = new THREE.Spherical();
+                    const offset = this.camera.position.clone().sub(this.vesselState.position);
+                    spherical.setFromVector3(offset);
+                    
+                    spherical.theta -= deltaX * 0.01;
+                    spherical.phi += deltaY * 0.01;
+                    spherical.phi = Math.max(0.1, Math.min(Math.PI - 0.1, spherical.phi));
+                    
+                    offset.setFromSpherical(spherical);
+                    this.camera.position.copy(this.vesselState.position).add(offset);
+                    this.camera.lookAt(this.vesselState.position);
+                    
+                    previousMousePosition = { x: e.clientX, y: e.clientY };
+                });
+
+                document.addEventListener('mouseup', () => {
+                    isDragging = false;
+                });
+
+                // Mouse wheel for zoom
+                this.renderer.domElement.addEventListener('wheel', (e) => {
+                    if (this.cameraSystem.mode === 'free') {
+                        const offset = this.camera.position.clone().sub(this.vesselState.position);
+                        const distance = offset.length();
+                        const newDistance = Math.max(5, Math.min(200, distance + e.deltaY * 0.1));
+                        offset.normalize().multiplyScalar(newDistance);
+                        this.camera.position.copy(this.vesselState.position).add(offset);
+                    }
+                    e.preventDefault();
+                });
+
+                // Keyboard controls
+                this.setupKeyboardControls();
+            }
+            
+            setupKeyboardControls() {
+                const keys = {};
+                
+                document.addEventListener('keydown', (e) => {
+                    keys[e.code] = true;
+                    
+                    switch(e.code) {
+                        case 'KeyW':
+                            this.vesselState.enginePower = Math.min(100, this.vesselState.enginePower + 10);
+                            this.updateControlDisplay('enginePower', this.vesselState.enginePower);
+                            break;
+                        case 'KeyS':
+                            this.vesselState.enginePower = Math.max(0, this.vesselState.enginePower - 10);
+                            this.updateControlDisplay('enginePower', this.vesselState.enginePower);
+                            break;
+                        case 'KeyA':
+                            this.vesselState.rudderAngle = Math.max(-30, this.vesselState.rudderAngle - 5);
+                            this.updateControlDisplay('rudderAngle', this.vesselState.rudderAngle);
+                            break;
+                        case 'KeyD':
+                            this.vesselState.rudderAngle = Math.min(30, this.vesselState.rudderAngle + 5);
+                            this.updateControlDisplay('rudderAngle', this.vesselState.rudderAngle);
+                            break;
+                        case 'Space':
+                            this.toggleEngine();
+                            e.preventDefault();
+                            break;
+                        case 'KeyN':
+                            this.toggleNets();
+                            break;
+                        case 'KeyC':
+                            this.cycleCameraMode();
+                            break;
+                    }
+                });
+
+                document.addEventListener('keyup', (e) => {
+                    keys[e.code] = false;
+                });
+            }
+            
+            setupControls() {
+                // Engine power control
+                document.getElementById('enginePower').addEventListener('input', (e) => {
+                    this.vesselState.enginePower = parseFloat(e.target.value);
+                    document.getElementById('powerValue').textContent = e.target.value;
+                });
+                
+                // Rudder angle control
+                document.getElementById('rudderAngle').addEventListener('input', (e) => {
+                    this.vesselState.rudderAngle = parseFloat(e.target.value);
+                    document.getElementById('rudderValue').textContent = e.target.value;
+                });
+                
+                // Net deployment control
+                document.getElementById('netDeployment').addEventListener('input', (e) => {
+                    this.vesselState.netDeployment = parseFloat(e.target.value);
+                    document.getElementById('netValue').textContent = e.target.value;
+                    this.updateNetDeployment();
+                });
+                
+                // Outrigger spread control
+                document.getElementById('outriggerSpread').addEventListener('input', (e) => {
+                    this.vesselState.outriggerSpread = parseFloat(e.target.value);
+                    document.getElementById('outriggerValue').textContent = e.target.value;
+                    this.updateOutriggerSpread();
+                });
+                
+                // Engine controls
+                document.getElementById('startEngine').addEventListener('click', () => {
+                    this.startEngine();
+                });
+                
+                document.getElementById('stopEngine').addEventListener('click', () => {
+                    this.stopEngine();
+                });
+                
+                // Net controls
+                document.getElementById('deployNets').addEventListener('click', () => {
+                    this.deployNets();
+                });
+                
+                document.getElementById('retrieveNets').addEventListener('click', () => {
+                    this.retrieveNets();
+                });
+                
+                // Visual controls
+                document.getElementById('toggleWireframe').addEventListener('click', () => {
+                    this.toggleWireframe();
+                });
+                
+                document.getElementById('nightMode').addEventListener('click', () => {
+                    this.toggleNightMode();
+                });
+                
+                // Camera controls
+                document.getElementById('cameraFollow').addEventListener('click', () => {
+                    this.setCameraMode('follow');
+                });
+                
+                document.getElementById('cameraFree').addEventListener('click', () => {
+                    this.setCameraMode('free');
+                });
+                
+                document.getElementById('cameraDeck').addEventListener('click', () => {
+                    this.setCameraMode('deck');
+                });
+                
+                // Window resize handler
+                window.addEventListener('resize', () => {
+                    this.camera.aspect = window.innerWidth / window.innerHeight;
+                    this.camera.updateProjectionMatrix();
+                    this.renderer.setSize(window.innerWidth, window.innerHeight);
+                });
+            }
+            
+            // Control methods
+            updateControlDisplay(control, value) {
+                const element = document.getElementById(control);
+                const valueElement = document.getElementById(control.replace('engine', 'power').replace('rudder', 'rudder') + 'Value');
+                if (element) element.value = value;
+                if (valueElement) valueElement.textContent = value;
+            }
+            
+            toggleEngine() {
+                if (this.vesselState.isEngineRunning) {
+                    this.stopEngine();
+                } else {
+                    this.startEngine();
+                }
+            }
+            
+            startEngine() {
+                this.vesselState.isEngineRunning = true;
+                document.getElementById('startEngine').classList.add('active');
+                document.getElementById('stopEngine').classList.remove('active');
+                document.getElementById('engineStatus').className = 'status-indicator status-on';
+                document.getElementById('engineState').textContent = 'ON';
+            }
+            
+            stopEngine() {
+                this.vesselState.isEngineRunning = false;
+                document.getElementById('stopEngine').classList.add('active');
+                document.getElementById('startEngine').classList.remove('active');
+                document.getElementById('engineStatus').className = 'status-indicator status-off';
+                document.getElementById('engineState').textContent = 'OFF';
+            }
+            
+            toggleNets() {
+                if (this.vesselState.netDeployment > 50) {
+                    this.retrieveNets();
+                } else {
+                    this.deployNets();
+                }
+            }
+            
+            deployNets() {
+                this.vesselState.netDeployment = 100;
+                document.getElementById('netDeployment').value = 100;
+                document.getElementById('netValue').textContent = '100';
+                this.updateNetDeployment();
+            }
+            
+            retrieveNets() {
+                this.vesselState.netDeployment = 0;
+                document.getElementById('netDeployment').value = 0;
+                document.getElementById('netValue').textContent = '0';
+                this.updateNetDeployment();
+            }
+            
+            updateNetDeployment() {
+                const deploymentRatio = this.vesselState.netDeployment / 100;
+                
+                // Show/hide nets based on deployment
+                ['left', 'right'].forEach(side => {
+                    if (this.components.nets[side]) {
+                        this.components.nets[side].visible = deploymentRatio > 0.1;
+                    }
+                });
+                
+                // Update net status
+                if (deploymentRatio === 0) {
+                    document.getElementById('netStatus').textContent = 'STOWED';
+                    document.getElementById('netPhysics').textContent = 'IDLE';
+                } else if (deploymentRatio < 1) {
+                    document.getElementById('netStatus').textContent = 'DEPLOYING';
+                    document.getElementById('netPhysics').textContent = 'ACTIVE';
+                } else {
+                    document.getElementById('netStatus').textContent = 'DEPLOYED';
+                    document.getElementById('netPhysics').textContent = 'FISHING';
+                    
+                    // Simulate catching shrimp when nets are deployed and boat is moving
+                    if (this.vesselState.speed > 1) {
+                        this.vesselState.catchWeight += Math.random() * 0.2;
+                    }
+                }
+            }
+            
+            updateOutriggerSpread() {
+                const spreadRatio = this.vesselState.outriggerSpread / 100;
+                const baseSpread = 8;
+                const maxSpread = 12;
+                const currentSpread = baseSpread + (maxSpread - baseSpread) * spreadRatio;
+                
+                if (this.components.outriggers.left) {
+                    this.components.outriggers.left.position.x = -currentSpread;
+                }
+                if (this.components.outriggers.right) {
+                    this.components.outriggers.right.position.x = currentSpread;
+                }
+            }
+            
+            setCameraMode(mode) {
+                this.cameraSystem.mode = mode;
+                
+                // Update button states
+                document.querySelectorAll('#controls button[id^="camera"]').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                document.getElementById('camera' + mode.charAt(0).toUpperCase() + mode.slice(1)).classList.add('active');
+            }
+            
+            cycleCameraMode() {
+                const modes = ['follow', 'free', 'deck'];
+                const currentIndex = modes.indexOf(this.cameraSystem.mode);
+                const nextIndex = (currentIndex + 1) % modes.length;
+                this.setCameraMode(modes[nextIndex]);
+            }
+            
+            toggleWireframe() {
+                const button = document.getElementById('toggleWireframe');
+                button.classList.toggle('active');
+                
+                // Toggle wireframe on all meshes
+                this.scene.traverse((child) => {
+                    if (child.isMesh && child.material) {
+                        if (Array.isArray(child.material)) {
+                            child.material.forEach(mat => {
+                                mat.wireframe = !mat.wireframe;
+                            });
+                        } else {
+                            child.material.wireframe = !child.material.wireframe;
+                        }
+                    }
+                });
+            }
+            
+            toggleNightMode() {
+                const button = document.getElementById('nightMode');
+                button.classList.toggle('active');
+                
+                if (this.environment.timeOfDay === 12) {
+                    // Switch to night
+                    this.environment.timeOfDay = 22;
+                    this.renderer.setClearColor(0x001122, 1);
+                    this.scene.fog.color.setHex(0x001122);
+                    this.sunLight.intensity = 0.2;
+                    this.sunLight.color.setHex(0x4444aa);
+                    
+                    // Turn on navigation lights at night
+                    if (this.navigationLights) {
+                        this.navigationLights.port.intensity = 0.8;
+                        this.navigationLights.starboard.intensity = 0.8;
+                        this.navigationLights.masthead.intensity = 1.2;
+                    }
+                } else {
+                    // Switch to day
+                    this.environment.timeOfDay = 12;
+                    this.renderer.setClearColor(0x87CEEB, 1);
+                    this.scene.fog.color.setHex(0x87CEEB);
+                    this.sunLight.intensity = 1.2;
+                    this.sunLight.color.setHex(0xffffff);
+                    
+                    // Dim navigation lights during day
+                    if (this.navigationLights) {
+                        this.navigationLights.port.intensity = 0.3;
+                        this.navigationLights.starboard.intensity = 0.3;
+                        this.navigationLights.masthead.intensity = 0.5;
+                    }
+                }
+            }
+            
+            updateVesselPhysics(deltaTime) {
+                // Engine and movement physics
+                if (this.vesselState.isEngineRunning && this.vesselState.enginePower > 0) {
+                    const thrustPower = this.vesselState.enginePower / 100;
+                    const maxSpeed = 20; // knots
+                    const thrust = thrustPower * 3;
+                    
+                    // Apply thrust in forward direction
+                    const forwardDirection = new THREE.Vector3(0, 0, -1);
+                    forwardDirection.applyEuler(this.vesselState.rotation);
+                    forwardDirection.multiplyScalar(thrust * deltaTime);
+                    
+                    this.vesselState.velocity.add(forwardDirection);
+                    
+                    // Fuel consumption
+                    this.vesselState.fuel -= thrustPower * deltaTime * 0.02;
+                    this.vesselState.fuel = Math.max(0, this.vesselState.fuel);
+                } else {
+                    // Natural deceleration when engine is off
+                    this.vesselState.velocity.multiplyScalar(0.98);
+                }
+                
+                // Water resistance and drag
+                this.vesselState.velocity.multiplyScalar(0.95);
+                
+                // Rudder effect (only when moving)
+                if (this.vesselState.speed > 0.5) {
+                    const rudderEffect = (this.vesselState.rudderAngle / 30) * this.vesselState.speed * 0.025;
+                    this.vesselState.rotation.y += rudderEffect * deltaTime;
+                    this.vesselState.heading = (this.vesselState.rotation.y * 180 / Math.PI) % 360;
+                    if (this.vesselState.heading < 0) this.vesselState.heading += 360;
+                }
+                
+                // Update position
+                this.vesselState.position.add(this.vesselState.velocity.clone().multiplyScalar(deltaTime));
+                this.vesselState.speed = this.vesselState.velocity.length() * 1.94384; // Convert to knots
+                
+                // Apply boat motion to boat group
+                this.components.boat.position.copy(this.vesselState.position);
+                this.components.boat.rotation.copy(this.vesselState.rotation);
+                
+                // Add realistic boat bobbing
+                const time = Date.now() * 0.001;
+                this.components.boat.position.y += Math.sin(time * 2) * 0.1 + Math.cos(time * 1.5) * 0.05;
+                this.components.boat.rotation.x = Math.sin(time * 1.8) * 0.02;
+                this.components.boat.rotation.z = Math.cos(time * 2.2) * 0.015;
+                
+                // Update mechanical components
+                this.updateMechanicalComponents(deltaTime);
+            }
+            
+            updateMechanicalComponents(deltaTime) {
+                // Rudder rotation
+                if (this.components.rudder) {
+                    this.components.rudder.rotation.y = this.vesselState.rudderAngle * Math.PI / 180;
+                }
+                
+                // Propeller rotation
+                if (this.components.propeller && this.vesselState.isEngineRunning) {
+                    const rotationSpeed = (this.vesselState.enginePower / 100) * 15;
+                    this.components.propeller.rotation.z += rotationSpeed * deltaTime;
+                }
+            }
+            
+            updateOceanWaves(time) {
+                if (!this.oceanVertices) return;
+                
+                const vertices = this.oceanVertices;
+                const originalVertices = this.oceanOriginalVertices;
+                
+                for (let i = 0; i < vertices.length; i += 3) {
+                    const x = originalVertices[i];
+                    const z = originalVertices[i + 2];
+                    
+                    // Multiple wave layers for realistic ocean
+                    const wave1 = Math.sin(x * 0.01 + time * 1.2) * 0.3;
+                    const wave2 = Math.cos(z * 0.008 + time * 0.8) * 0.4;
+                    const wave3 = Math.sin((x + z) * 0.005 + time * 1.5) * 0.2;
+                    const wave4 = Math.cos(x * 0.003 - z * 0.004 + time * 0.6) * 0.15;
+                    
+                    vertices[i + 1] = (wave1 + wave2 + wave3 + wave4) * this.environment.waveHeight;
+                }
+                
+                this.components.ocean.geometry.attributes.position.needsUpdate = true;
+                this.components.ocean.geometry.computeVertexNormals();
+            }
+            
+            updateAtmosphericElements(deltaTime) {
+                // Animate seabirds
+                if (this.components.seabirds) {
+                    this.components.seabirds.children.forEach((bird, index) => {
+                        const userData = bird.userData;
+                        userData.phase += deltaTime * userData.speed;
+                        
+                        bird.position.x += Math.sin(userData.phase) * 0.2;
+                        bird.position.z += Math.cos(userData.phase * 0.7) * 0.15;
+                        bird.position.y += Math.sin(userData.phase * 2) * 0.05;
+                        bird.rotation.y = Math.sin(userData.phase) * 0.3;
+                        bird.rotation.z = Math.cos(userData.phase * 1.5) * 0.1;
+                    });
+                }
+                
+                // Animate floating debris
+                if (this.components.debris) {
+                    this.components.debris.children.forEach((debris, index) => {
+                        debris.rotation.y += deltaTime * 0.2;
+                        debris.position.y = -1.8 + Math.sin(Date.now() * 0.001 + index) * 0.2;
+                    });
+                }
+            }
+            
+            updateCameraSystem() {
+                switch (this.cameraSystem.mode) {
+                    case 'follow':
+                        const followOffset = this.cameraSystem.followOffset.clone();
+                        followOffset.applyEuler(this.vesselState.rotation);
+                        this.camera.position.copy(this.vesselState.position.clone().add(followOffset));
+                        this.camera.lookAt(this.vesselState.position);
+                        break;
+                        
+                    case 'deck':
+                        const deckOffset = this.cameraSystem.deckOffset.clone();
+                        deckOffset.applyEuler(this.vesselState.rotation);
+                        this.camera.position.copy(this.vesselState.position.clone().add(deckOffset));
+                        
+                        const lookAtPoint = this.vesselState.position.clone();
+                        const forwardDirection = new THREE.Vector3(0, 0, -10);
+                        forwardDirection.applyEuler(this.vesselState.rotation);
+                        lookAtPoint.add(forwardDirection);
+                        this.camera.lookAt(lookAtPoint);
+                        break;
+                        
+                    case 'free':
+                        // Free camera is controlled by mouse, no automatic updates
+                        break;
+                }
+            }
+            
+            updateTelemetry() {
+                // Update all telemetry displays
+                document.getElementById('vesselSpeed').textContent = this.vesselState.speed.toFixed(1) + ' kts';
+                document.getElementById('vesselHeading').textContent = Math.round(this.vesselState.heading).toString().padStart(3, '0') + '°';
+                document.getElementById('waterDepth').textContent = (40 + Math.sin(Date.now() * 0.0001) * 10 + Math.random() * 2).toFixed(1) + 'm';
+                document.getElementById('fuelLevel').textContent = Math.round(this.vesselState.fuel) + '%';
+                document.getElementById('catchWeight').textContent = Math.round(this.vesselState.catchWeight) + ' kg';
+                
+                // GPS coordinates (simulated)
+                const lat = 29.3 + (this.vesselState.position.z / 1000);
+                const lon = -90.1 + (this.vesselState.position.x / 1000);
+                document.getElementById('gpsCoords').textContent = `${lat.toFixed(2)}°N ${Math.abs(lon).toFixed(2)}°W`;
+            }
+            
+            updatePerformanceMetrics() {
+                this.performance.frameCount++;
+                const now = performance.now();
+                
+                if (now >= this.performance.lastTime + 1000) {
+                    this.performance.fps = Math.round((this.performance.frameCount * 1000) / (now - this.performance.lastTime));
+                    this.performance.frameCount = 0;
+                    this.performance.lastTime = now;
+                    
+                    // Update performance display
+                    document.getElementById('fps').textContent = this.performance.fps;
+                    document.getElementById('triangles').textContent = this.renderer.info.render.triangles;
+                    
+                    // Calculate total vertex count
+                    let vertexCount = 0;
+                    this.scene.traverse((child) => {
+                        if (child.isMesh && child.geometry) {
+                            const positions = child.geometry.attributes.position;
+                            if (positions) {
+                                vertexCount += positions.count;
+                            }
+                        }
+                    });
+                    document.getElementById('vertexCount').textContent = vertexCount;
+                }
+            }
+            
+            startSimulation() {
+                const animate = () => {
+                    requestAnimationFrame(animate);
+                    
+                    const currentTime = performance.now() * 0.001;
+                    const deltaTime = Math.min(currentTime - (this.lastTime || currentTime), 0.033); // Cap at 30fps minimum
+                    this.lastTime = currentTime;
+                    
+                    // Core simulation updates
+                    this.updateVesselPhysics(deltaTime);
+                    this.updateNetPhysics(deltaTime);
+                    this.updateOceanWaves(currentTime);
+                    this.updateAtmosphericElements(deltaTime);
+                    this.updateCameraSystem();
+                    
+                    // UI updates
+                    this.updateTelemetry();
+                    this.updatePerformanceMetrics();
+                    
+                    // Render the scene
+                    this.renderer.render(this.scene, this.camera);
+                };
+                
+                animate();
+                console.log('Simulation loop started');
+            }
+        }
+
+        // Initialize the advanced shrimp boat simulation
+        window.addEventListener('load', () => {
+            try {
+                console.log('Initializing Advanced Shrimp Boat Simulation...');
+                new ShrimpBoatSimulation();
+            } catch (error) {
+                console.error('Failed to initialize shrimp boat simulation:', error);
+                
+                // Fallback error display
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = `
+                    position: fixed;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    background: rgba(255, 0, 0, 0.9);
+                    color: white;
+                    padding: 20px;
+                    border-radius: 10px;
+                    font-family: monospace;
+                    z-index: 10000;
+                `;
+                errorDiv.innerHTML = `
+                    <h3>Simulation Error</h3>
+                    <p>Failed to initialize the shrimp boat simulation.</p>
+                    <p>Error: ${error.message}</p>
+                    <p>Please check the console for more details.</p>
+                `;
+                document.body.appendChild(errorDiv);
+            }
+        });
+    </script>
+</body>
+</html>
